@@ -1,7 +1,7 @@
-From 07c3e728990ad63d2a4de11f6df8e07f2d2797ea Mon Sep 17 00:00:00 2001
+From f97323e3fbc47e3e74a30512b5da360848abcdcb Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 20:08:21 -0500
-Subject: [PATCH 68/73] Add console message callback
+Subject: [PATCH 68/76] Add console message callback
 
 The console had stories to tell,
 But no little wire for the spell.
@@ -17,7 +17,7 @@ And land where the terminal dwells.
  5 files changed, 257 insertions(+), 117 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.cc b/content/libtermsurf_chromium/libtermsurf_chromium.cc
-index b9200ccb538cc..bb3b710848673 100644
+index b9200ccb53..bb3b710848 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.cc
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 @@ -6,13 +6,13 @@
@@ -439,7 +439,7 @@ index b9200ccb538cc..bb3b710848673 100644
 +  g_on_console_message_data = user_data;
 +}
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.h b/content/libtermsurf_chromium/libtermsurf_chromium.h
-index 2c41ccfc28c9d..37a7ab9083fbf 100644
+index 2c41ccfc28..37a7ab9083 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.h
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.h
 @@ -66,20 +66,20 @@ TS_EXPORT void ts_destroy_browser_context(ts_browser_context_t ctx);
@@ -566,7 +566,7 @@ index 2c41ccfc28c9d..37a7ab9083fbf 100644
 -#endif  /* CONTENT_LIBTERMSURF_CONTENT_LIBTERMSURF_CHROMIUM_H_ */
 +#endif /* CONTENT_LIBTERMSURF_CONTENT_LIBTERMSURF_CHROMIUM_H_ */
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.h b/content/libtermsurf_chromium/ts_browser_main_parts.h
-index 7d5f9daae5eef..9183794de3c26 100644
+index 7d5f9daae5..9183794de3 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.h
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.h
 @@ -51,6 +51,11 @@ void TsNotifyLoadingState(void* wc_handle, const char* state, int progress);
@@ -582,7 +582,7 @@ index 7d5f9daae5eef..9183794de3c26 100644
  class TsBrowserMainParts : public ShellBrowserMainParts {
   public:
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.cc b/content/libtermsurf_chromium/ts_tab_observer.cc
-index 95d2ce4c5493b..b3832c79484d0 100644
+index 95d2ce4c54..b3832c7948 100644
 --- a/content/libtermsurf_chromium/ts_tab_observer.cc
 +++ b/content/libtermsurf_chromium/ts_tab_observer.cc
 @@ -25,6 +25,24 @@
@@ -636,7 +636,7 @@ index 95d2ce4c5493b..b3832c79484d0 100644
  void TsTabObserver::OnCursorChanged(const ui::Cursor& cursor) {
    TsNotifyCursorChanged(reinterpret_cast<void*>(handle_),
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.h b/content/libtermsurf_chromium/ts_tab_observer.h
-index 5db0db672e0d1..6ae740b9b6f3a 100644
+index 5db0db672e..6ae740b9b6 100644
 --- a/content/libtermsurf_chromium/ts_tab_observer.h
 +++ b/content/libtermsurf_chromium/ts_tab_observer.h
 @@ -6,6 +6,8 @@
@@ -685,5 +685,5 @@ index 5db0db672e0d1..6ae740b9b6f3a 100644
  #if BUILDFLAG(IS_MAC)
    void RenderViewHostChanged(RenderViewHost* old_host,
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

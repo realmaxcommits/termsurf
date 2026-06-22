@@ -1,7 +1,7 @@
-From 27deaf460205e1955c4811a2b85f1c4ad37bf06e Mon Sep 17 00:00:00 2001
+From 079ed79ce3cddd4a60f4e074ced928f0f94d5d07 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Tue, 19 May 2026 19:11:29 -0500
-Subject: [PATCH 09/73] Add safe popup trace points
+Subject: [PATCH 09/76] Add safe popup trace points
 
 A select menu lost its map,
 So logs now mark the trail.
@@ -13,7 +13,7 @@ Just breadcrumbs when they fail.
  2 files changed, 63 insertions(+)
 
 diff --git a/content/browser/renderer_host/popup_menu_helper_mac.mm b/content/browser/renderer_host/popup_menu_helper_mac.mm
-index c56f5f44282eb..575646a4534f4 100644
+index c56f5f4428..575646a453 100644
 --- a/content/browser/renderer_host/popup_menu_helper_mac.mm
 +++ b/content/browser/renderer_host/popup_menu_helper_mac.mm
 @@ -4,6 +4,9 @@
@@ -26,7 +26,7 @@ index c56f5f44282eb..575646a4534f4 100644
  #include "base/numerics/safe_conversions.h"
  #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
  #include "content/browser/permissions/permission_controller_impl.h"
-@@ -22,6 +25,20 @@
+@@ -22,6 +25,20 @@ namespace {
  
  bool g_allow_showing_popup_menus = true;
  
@@ -47,7 +47,7 @@ index c56f5f44282eb..575646a4534f4 100644
  }  // namespace
  
  PopupMenuHelper::PopupMenuHelper(
-@@ -62,6 +79,20 @@
+@@ -62,6 +79,20 @@ void PopupMenuHelper::ShowPopupMenu(
    // Convert element_bounds to be in screen.
    gfx::Rect client_area = web_contents->GetContainerBounds();
    gfx::Rect bounds_in_screen = bounds + client_area.OffsetFromOrigin();
@@ -69,7 +69,7 @@ index c56f5f44282eb..575646a4534f4 100644
    // The new popup menu would overlap the permission prompt, which could lead to
    // users making decisions based on incorrect information. We should close the
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 3beda19079b96..27c2f57080321 100644
+index 3beda19079..27c2f57080 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -4,6 +4,7 @@
@@ -133,5 +133,5 @@ index 3beda19079b96..27c2f57080321 100644
  #if BUILDFLAG(IS_MAC)
    if (auto* view = shell->web_contents()->GetRenderWidgetHostView()) {
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

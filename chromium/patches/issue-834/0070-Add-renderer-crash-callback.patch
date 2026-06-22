@@ -1,7 +1,7 @@
-From 53a6ebc6f534a1cbc3e86c44b669a3b4bf6f9164 Mon Sep 17 00:00:00 2001
+From 53928baf47835c605741c602dcb1619435cc7b9b Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 21:21:02 -0500
-Subject: [PATCH 70/73] Add renderer crash callback
+Subject: [PATCH 70/76] Add renderer crash callback
 
 When renderers trip and hit the floor,
 The tab now knocks on TermSurf's door.
@@ -16,7 +16,7 @@ Then lets the page resume its ways.
  5 files changed, 107 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.cc b/content/libtermsurf_chromium/libtermsurf_chromium.cc
-index e634db7c16a3f..dd399f8d36180 100644
+index e634db7c16..dd399f8d36 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.cc
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 @@ -92,6 +92,15 @@ void (*g_on_http_auth_request)(ts_web_contents_t,
@@ -70,7 +70,7 @@ index e634db7c16a3f..dd399f8d36180 100644
 +  g_on_renderer_crashed_data = user_data;
 +}
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.h b/content/libtermsurf_chromium/libtermsurf_chromium.h
-index 84ff1ffa660bc..a35e5a7e836ae 100644
+index 84ff1ffa66..a35e5a7e83 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.h
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.h
 @@ -228,6 +228,15 @@ TS_EXPORT void ts_set_on_http_auth_request(
@@ -90,7 +90,7 @@ index 84ff1ffa660bc..a35e5a7e836ae 100644
  }
  #endif
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.h b/content/libtermsurf_chromium/ts_browser_main_parts.h
-index 9183794de3c26..be18b481cf174 100644
+index 9183794de3..be18b481cf 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.h
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.h
 @@ -51,6 +51,11 @@ void TsNotifyLoadingState(void* wc_handle, const char* state, int progress);
@@ -106,7 +106,7 @@ index 9183794de3c26..be18b481cf174 100644
                              const char* level,
                              const char* message,
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.cc b/content/libtermsurf_chromium/ts_tab_observer.cc
-index b3832c79484d0..aa7db70236b44 100644
+index b3832c7948..aa7db70236 100644
 --- a/content/libtermsurf_chromium/ts_tab_observer.cc
 +++ b/content/libtermsurf_chromium/ts_tab_observer.cc
 @@ -41,6 +41,47 @@ const char* ConsoleLevelToString(blink::mojom::ConsoleMessageLevel level) {
@@ -182,7 +182,7 @@ index b3832c79484d0..aa7db70236b44 100644
  #if BUILDFLAG(IS_MAC)
    if (!entry) {
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.h b/content/libtermsurf_chromium/ts_tab_observer.h
-index 6ae740b9b6f3a..e2d1f8d813783 100644
+index 6ae740b9b6..e2d1f8d813 100644
 --- a/content/libtermsurf_chromium/ts_tab_observer.h
 +++ b/content/libtermsurf_chromium/ts_tab_observer.h
 @@ -11,6 +11,7 @@
@@ -203,5 +203,5 @@ index 6ae740b9b6f3a..e2d1f8d813783 100644
    void OnDidAddMessageToConsole(
        RenderFrameHost* source_frame,
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

@@ -1,7 +1,7 @@
-From 16dd336b990fa7adef32c3f3df4c17267729c1df Mon Sep 17 00:00:00 2001
+From a480eb57703bbf740af42920f8d2900b81abcc39 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Thu, 5 Mar 2026 06:51:55 -0600
-Subject: [PATCH 01/73] Add libtermsurf_chromium library
+Subject: [PATCH 01/76] Add libtermsurf_chromium library
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -49,7 +49,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
 new file mode 100644
-index 0000000000000..a698f7a811e22
+index 0000000000..a698f7a811
 --- /dev/null
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -0,0 +1,55 @@
@@ -110,7 +110,7 @@ index 0000000000000..a698f7a811e22
 +}
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.cc b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 new file mode 100644
-index 0000000000000..6fb382cadcac7
+index 0000000000..6fb382cadc
 --- /dev/null
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 @@ -0,0 +1,263 @@
@@ -379,7 +379,7 @@ index 0000000000000..6fb382cadcac7
 +}
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.h b/content/libtermsurf_chromium/libtermsurf_chromium.h
 new file mode 100644
-index 0000000000000..b1fcfc118b9ec
+index 0000000000..b1fcfc118b
 --- /dev/null
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.h
 @@ -0,0 +1,175 @@
@@ -560,7 +560,7 @@ index 0000000000000..b1fcfc118b9ec
 +#endif  /* CONTENT_LIBTERMSURF_CONTENT_LIBTERMSURF_CHROMIUM_H_ */
 diff --git a/content/libtermsurf_chromium/test_main.cc b/content/libtermsurf_chromium/test_main.cc
 new file mode 100644
-index 0000000000000..36b3cdc1149a9
+index 0000000000..36b3cdc114
 --- /dev/null
 +++ b/content/libtermsurf_chromium/test_main.cc
 @@ -0,0 +1,17 @@
@@ -583,7 +583,7 @@ index 0000000000000..36b3cdc1149a9
 +}
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
 new file mode 100644
-index 0000000000000..7464404408060
+index 0000000000..7464404408
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -0,0 +1,84 @@
@@ -673,7 +673,7 @@ index 0000000000000..7464404408060
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
 new file mode 100644
-index 0000000000000..58e034b3a7f9e
+index 0000000000..58e034b3a7
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -0,0 +1,43 @@
@@ -722,7 +722,7 @@ index 0000000000000..58e034b3a7f9e
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_BROWSER_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 new file mode 100644
-index 0000000000000..3beda19079b96
+index 0000000000..3beda19079
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -0,0 +1,715 @@
@@ -1443,7 +1443,7 @@ index 0000000000000..3beda19079b96
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.h b/content/libtermsurf_chromium/ts_browser_main_parts.h
 new file mode 100644
-index 0000000000000..a0b7038c32373
+index 0000000000..a0b7038c32
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.h
 @@ -0,0 +1,106 @@
@@ -1555,7 +1555,7 @@ index 0000000000000..a0b7038c32373
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_BROWSER_MAIN_PARTS_H_
 diff --git a/content/libtermsurf_chromium/ts_ca_layer_bridge_mac.h b/content/libtermsurf_chromium/ts_ca_layer_bridge_mac.h
 new file mode 100644
-index 0000000000000..b09531797f850
+index 0000000000..b09531797f
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_ca_layer_bridge_mac.h
 @@ -0,0 +1,24 @@
@@ -1585,7 +1585,7 @@ index 0000000000000..b09531797f850
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_CA_LAYER_BRIDGE_MAC_H_
 diff --git a/content/libtermsurf_chromium/ts_ca_layer_bridge_mac.mm b/content/libtermsurf_chromium/ts_ca_layer_bridge_mac.mm
 new file mode 100644
-index 0000000000000..c5af57f60a6f1
+index 0000000000..c5af57f60a
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_ca_layer_bridge_mac.mm
 @@ -0,0 +1,18 @@
@@ -1609,7 +1609,7 @@ index 0000000000000..c5af57f60a6f1
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_compositor_bridge_mac.h b/content/libtermsurf_chromium/ts_compositor_bridge_mac.h
 new file mode 100644
-index 0000000000000..eb503b139f6de
+index 0000000000..eb503b139f
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_compositor_bridge_mac.h
 @@ -0,0 +1,47 @@
@@ -1662,7 +1662,7 @@ index 0000000000000..eb503b139f6de
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_COMPOSITOR_BRIDGE_MAC_H_
 diff --git a/content/libtermsurf_chromium/ts_compositor_bridge_mac.mm b/content/libtermsurf_chromium/ts_compositor_bridge_mac.mm
 new file mode 100644
-index 0000000000000..f8a5d5e72e652
+index 0000000000..f8a5d5e72e
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_compositor_bridge_mac.mm
 @@ -0,0 +1,35 @@
@@ -1703,7 +1703,7 @@ index 0000000000000..f8a5d5e72e652
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_main_delegate.cc b/content/libtermsurf_chromium/ts_main_delegate.cc
 new file mode 100644
-index 0000000000000..fff1576276025
+index 0000000000..fff1576276
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_main_delegate.cc
 @@ -0,0 +1,122 @@
@@ -1831,7 +1831,7 @@ index 0000000000000..fff1576276025
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_main_delegate.h b/content/libtermsurf_chromium/ts_main_delegate.h
 new file mode 100644
-index 0000000000000..9a6d57da39a99
+index 0000000000..9a6d57da39
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_main_delegate.h
 @@ -0,0 +1,29 @@
@@ -1866,7 +1866,7 @@ index 0000000000000..9a6d57da39a99
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_MAIN_DELEGATE_H_
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.cc b/content/libtermsurf_chromium/ts_tab_observer.cc
 new file mode 100644
-index 0000000000000..1ca1bbf4d7c22
+index 0000000000..1ca1bbf4d7
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_tab_observer.cc
 @@ -0,0 +1,143 @@
@@ -2015,7 +2015,7 @@ index 0000000000000..1ca1bbf4d7c22
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.h b/content/libtermsurf_chromium/ts_tab_observer.h
 new file mode 100644
-index 0000000000000..5db0db672e0d1
+index 0000000000..5db0db672e
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_tab_observer.h
 @@ -0,0 +1,78 @@
@@ -2098,5 +2098,5 @@ index 0000000000000..5db0db672e0d1
 +
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_TAB_OBSERVER_H_
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

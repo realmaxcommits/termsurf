@@ -1,7 +1,7 @@
-From 4806a3457d9cec05786f97cfdb53529fa9685434 Mon Sep 17 00:00:00 2001
+From 8496f1be111cae9bfc4dabe2aafe4af44e81d807 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 21:48:49 -0500
-Subject: [PATCH 71/73] Deny permissions by default
+Subject: [PATCH 71/76] Deny permissions by default
 
 A shell once handed out keys,
 To every bright API breeze.
@@ -24,7 +24,7 @@ A safe path with tests that appease.
  create mode 100644 content/libtermsurf_chromium/ts_permission_manager.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 0b0053d1ab2ef..0d69e9f14dab8 100644
+index 0b0053d1ab..0d69e9f14d 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -45,6 +45,8 @@ shared_library("libtermsurf_chromium") {
@@ -46,7 +46,7 @@ index 0b0053d1ab2ef..0d69e9f14dab8 100644
      "ts_plugin_response_interceptor_url_loader_throttle.h",
      "ts_plugin_utils.cc",
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 3109bc627ba7e..a75baf0f9ef88 100644
+index 3109bc627b..a75baf0f9e 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -5,6 +5,7 @@
@@ -72,7 +72,7 @@ index 3109bc627ba7e..a75baf0f9ef88 100644
      BrowserContext* context,
      network::mojom::NetworkContextParams* context_params,
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
-index 0c20d08cb5e5b..12f65f7ac1608 100644
+index 0c20d08cb5..12f65f7ac1 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.h
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -99,6 +99,8 @@ class TsBrowserClient : public ShellContentBrowserClient {
@@ -86,7 +86,7 @@ index 0c20d08cb5e5b..12f65f7ac1608 100644
    void ConfigureNetworkContextParamsForShell(
 diff --git a/content/libtermsurf_chromium/ts_browser_context.cc b/content/libtermsurf_chromium/ts_browser_context.cc
 new file mode 100644
-index 0000000000000..8c0a41280886f
+index 0000000000..8c0a412808
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_browser_context.cc
 @@ -0,0 +1,28 @@
@@ -120,7 +120,7 @@ index 0000000000000..8c0a41280886f
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_browser_context.h b/content/libtermsurf_chromium/ts_browser_context.h
 new file mode 100644
-index 0000000000000..937a20daf6644
+index 0000000000..937a20daf6
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_browser_context.h
 @@ -0,0 +1,28 @@
@@ -153,7 +153,7 @@ index 0000000000000..937a20daf6644
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_BROWSER_CONTEXT_H_
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 4ad7fa501e16f..3196866833e02 100644
+index 4ad7fa501e..3196866833 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -26,6 +26,7 @@
@@ -177,7 +177,7 @@ index 4ad7fa501e16f..3196866833e02 100644
    ConfigureTsDownloads(off_the_record_browser_context());
 diff --git a/content/libtermsurf_chromium/ts_permission_manager.cc b/content/libtermsurf_chromium/ts_permission_manager.cc
 new file mode 100644
-index 0000000000000..575f1c4455e6c
+index 0000000000..575f1c4455
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_permission_manager.cc
 @@ -0,0 +1,152 @@
@@ -335,7 +335,7 @@ index 0000000000000..575f1c4455e6c
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_permission_manager.h b/content/libtermsurf_chromium/ts_permission_manager.h
 new file mode 100644
-index 0000000000000..76838566b925d
+index 0000000000..76838566b9
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_permission_manager.h
 @@ -0,0 +1,61 @@
@@ -401,5 +401,5 @@ index 0000000000000..76838566b925d
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_PERMISSION_MANAGER_H_
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

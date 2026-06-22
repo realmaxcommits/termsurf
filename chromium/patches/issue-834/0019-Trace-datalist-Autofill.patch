@@ -1,7 +1,7 @@
-From 5380d54d3b2d59fd13889b77a8a5fda61deef2ef Mon Sep 17 00:00:00 2001
+From 460ff74ad084c9ab50466e149e179ed49bd32057 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 08:20:57 -0500
-Subject: [PATCH 19/73] Trace datalist Autofill
+Subject: [PATCH 19/76] Trace datalist Autofill
 
 A datalist knocked, but who heard the call?
 
@@ -18,7 +18,7 @@ The logs will start hissing.
  4 files changed, 225 insertions(+), 4 deletions(-)
 
 diff --git a/components/autofill/content/renderer/autofill_agent.cc b/components/autofill/content/renderer/autofill_agent.cc
-index 344fa08e9ddc2..984558ca848be 100644
+index 344fa08e9d..984558ca84 100644
 --- a/components/autofill/content/renderer/autofill_agent.cc
 +++ b/components/autofill/content/renderer/autofill_agent.cc
 @@ -8,6 +8,7 @@
@@ -244,7 +244,7 @@ index 344fa08e9ddc2..984558ca848be 100644
                                            GetCaretBounds(*render_frame),
                                            trigger_source, password_request);
 diff --git a/components/autofill/core/browser/ui/autofill_external_delegate.cc b/components/autofill/core/browser/ui/autofill_external_delegate.cc
-index 99b0ffbd2d088..898f78e42314a 100644
+index 99b0ffbd2d..898f78e423 100644
 --- a/components/autofill/core/browser/ui/autofill_external_delegate.cc
 +++ b/components/autofill/core/browser/ui/autofill_external_delegate.cc
 @@ -297,6 +297,23 @@ void AutofillExternalDelegate::OnQuery(
@@ -272,7 +272,7 @@ index 99b0ffbd2d088..898f78e42314a 100644
    query_field_ = field;
    caret_bounds_ = caret_bounds;
 diff --git a/content/shell/renderer/shell_content_renderer_client.cc b/content/shell/renderer/shell_content_renderer_client.cc
-index 539090621f9a1..089e88acf3cb0 100644
+index 539090621f..089e88acf3 100644
 --- a/content/shell/renderer/shell_content_renderer_client.cc
 +++ b/content/shell/renderer/shell_content_renderer_client.cc
 @@ -4,6 +4,7 @@
@@ -328,7 +328,7 @@ index 539090621f9a1..089e88acf3cb0 100644
    // browser tests. If we only create that for browser tests then the override
    // of this method in WebTestContentRendererClient would not be needed.
 diff --git a/third_party/blink/renderer/core/page/chrome_client_impl.cc b/third_party/blink/renderer/core/page/chrome_client_impl.cc
-index 3bb744b92cc2a..2c75aadfe53d1 100644
+index 3bb744b92c..2c75aadfe5 100644
 --- a/third_party/blink/renderer/core/page/chrome_client_impl.cc
 +++ b/third_party/blink/renderer/core/page/chrome_client_impl.cc
 @@ -31,11 +31,13 @@
@@ -414,5 +414,5 @@ index 3bb744b92cc2a..2c75aadfe53d1 100644
    }
  }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

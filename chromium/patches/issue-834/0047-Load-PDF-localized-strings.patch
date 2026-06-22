@@ -1,7 +1,7 @@
-From a40294c71f32d469f07cee437d763cc371c7e491 Mon Sep 17 00:00:00 2001
+From 70785d415b9482342f321c027406a9168820eb71 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 17:15:08 -0500
-Subject: [PATCH 47/73] Load PDF localized strings
+Subject: [PATCH 47/76] Load PDF localized strings
 
 The PDF knew its portrait face,
 But not the string nor where to place.
@@ -13,7 +13,7 @@ And Bitcoin pages start to glow.
  2 files changed, 26 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index f0038e89596cb..4aa16e4947467 100644
+index f0038e8959..4aa16e4947 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -88,6 +88,7 @@ shared_library("libtermsurf_chromium") {
@@ -25,7 +25,7 @@ index f0038e89596cb..4aa16e4947467 100644
      "//components/value_store",
      "//components/zoom",
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
-index ce8a24459180a..20c32a42eb7e9 100644
+index ce8a244591..20c32a42eb 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 @@ -16,6 +16,7 @@
@@ -68,5 +68,5 @@ index ce8a24459180a..20c32a42eb7e9 100644
        assets_path.AppendASCII("gen").AppendASCII("chrome").AppendASCII(
            "common_resources.pak");
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

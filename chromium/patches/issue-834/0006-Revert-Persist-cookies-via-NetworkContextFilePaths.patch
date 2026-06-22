@@ -1,7 +1,7 @@
-From 52c5f68f2ab84fe484dfc552662cb2a25aeebc38 Mon Sep 17 00:00:00 2001
+From 5d188d38ea2d21b4f174a7237d520c53b611fc15 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 20 Mar 2026 07:03:25 -0500
-Subject: [PATCH 06/73] Revert "Persist cookies via NetworkContextFilePaths"
+Subject: [PATCH 06/76] Revert "Persist cookies via NetworkContextFilePaths"
 
 This reverts commit 4e1c734847f06ef316ac96cd94e793d118589322.
 ---
@@ -10,7 +10,7 @@ This reverts commit 4e1c734847f06ef316ac96cd94e793d118589322.
  2 files changed, 34 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 9a87022e009ec..7464404408060 100644
+index 9a87022e00..7464404408 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -5,8 +5,6 @@
@@ -52,7 +52,7 @@ index 9a87022e009ec..7464404408060 100644
 -
  }  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
-index b671edda23858..58e034b3a7f9e 100644
+index b671edda23..58e034b3a7 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.h
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -8,7 +8,6 @@
@@ -78,5 +78,5 @@ index b671edda23858..58e034b3a7f9e 100644
    class StubBadgeService;
    std::unique_ptr<StubBadgeService> stub_badge_service_;
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

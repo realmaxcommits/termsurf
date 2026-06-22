@@ -1,7 +1,7 @@
-From f2679e8959dee377579453e9d335f9f9ee1ff07c Mon Sep 17 00:00:00 2001
+From 68f68f2a4450efa1fbbe58357834c32e9a93f359 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 14 Mar 2026 15:02:19 -0500
-Subject: [PATCH 03/73] Suppress new-window, navigate same tab
+Subject: [PATCH 03/76] Suppress new-window, navigate same tab
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -19,7 +19,7 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
  2 files changed, 63 insertions(+), 16 deletions(-)
 
 diff --git a/content/shell/browser/shell.cc b/content/shell/browser/shell.cc
-index cee8b0094c0eb..651f0fe84a432 100644
+index cee8b0094c..651f0fe84a 100644
 --- a/content/shell/browser/shell.cc
 +++ b/content/shell/browser/shell.cc
 @@ -46,6 +46,8 @@
@@ -111,7 +111,7 @@ index cee8b0094c0eb..651f0fe84a432 100644
      // No tabs in content_shell:
      case WindowOpenDisposition::SINGLETON_TAB:
 diff --git a/content/shell/browser/shell.h b/content/shell/browser/shell.h
-index e58e5d56c0690..210a179a50197 100644
+index e58e5d56c0..210a179a50 100644
 --- a/content/shell/browser/shell.h
 +++ b/content/shell/browser/shell.h
 @@ -123,6 +123,22 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
@@ -138,5 +138,5 @@ index e58e5d56c0690..210a179a50197 100644
                             bool should_show_loading_ui) override;
  #if BUILDFLAG(IS_ANDROID)
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

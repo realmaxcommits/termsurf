@@ -1,7 +1,7 @@
-From 275452fd8cca8b9af6ce93276e71a652f11391d6 Mon Sep 17 00:00:00 2001
+From a18decbce1c1cb9b8768dfea9863e38af843bafb Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 13:44:32 -0500
-Subject: [PATCH 57/73] Probe contained PDF print activation
+Subject: [PATCH 57/76] Probe contained PDF print activation
 
 ---
  .../renderer/pdf_view_web_plugin_client.cc    | 83 +++++++++++++++++--
@@ -13,7 +13,7 @@ Subject: [PATCH 57/73] Probe contained PDF print activation
  6 files changed, 206 insertions(+), 8 deletions(-)
 
 diff --git a/components/pdf/renderer/pdf_view_web_plugin_client.cc b/components/pdf/renderer/pdf_view_web_plugin_client.cc
-index e5a6e7f230710..6400ea0042b04 100644
+index e5a6e7f230..6400ea0042 100644
 --- a/components/pdf/renderer/pdf_view_web_plugin_client.cc
 +++ b/components/pdf/renderer/pdf_view_web_plugin_client.cc
 @@ -5,11 +5,18 @@
@@ -171,7 +171,7 @@ index e5a6e7f230710..6400ea0042b04 100644
    printing::PrintRenderFrameHelper::Get(render_frame_)->PrintNode(element);
  #endif  // BUILDFLAG(ENABLE_PRINTING)
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
-index 84195d18bf8aa..252bffa1e73a4 100644
+index 84195d18bf..252bffa1e7 100644
 --- a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 @@ -4,8 +4,10 @@
@@ -215,7 +215,7 @@ index 84195d18bf8aa..252bffa1e73a4 100644
    webui::SetLoadTimeDataDefaults(l10n_util::GetApplicationLocale(std::string()),
                                   replacements);
 diff --git a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
-index ae707f682d0a7..99dc53d387521 100644
+index ae707f682d..99dc53d387 100644
 --- a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 @@ -4,9 +4,11 @@
@@ -260,7 +260,7 @@ index ae707f682d0a7..99dc53d387521 100644
    return dict;
  }
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 5c51e4826eab2..a20d7bbed4576 100644
+index 5c51e4826e..a20d7bbed4 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -4,6 +4,8 @@
@@ -341,7 +341,7 @@ index 5c51e4826eab2..a20d7bbed4576 100644
  TsBrowserClient::CreateNonNetworkNavigationURLLoaderFactory(
      const std::string& scheme,
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
-index ef11a9dc0b492..708d0d7ae4327 100644
+index ef11a9dc0b..708d0d7ae4 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.h
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -65,6 +65,8 @@ class TsBrowserClient : public ShellContentBrowserClient {
@@ -354,7 +354,7 @@ index ef11a9dc0b492..708d0d7ae4327 100644
    CreateNonNetworkNavigationURLLoaderFactory(
        const std::string& scheme,
 diff --git a/pdf/pdf_view_web_plugin.cc b/pdf/pdf_view_web_plugin.cc
-index 33c43b8a7810b..8ed74ea97a098 100644
+index 33c43b8a78..8ed74ea97a 100644
 --- a/pdf/pdf_view_web_plugin.cc
 +++ b/pdf/pdf_view_web_plugin.cc
 @@ -10,6 +10,7 @@
@@ -450,5 +450,5 @@ index 33c43b8a7810b..8ed74ea97a098 100644
      return;
    }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

@@ -1,7 +1,7 @@
-From 0474ee55d5996ac7e36b6830178fc0331ea53c04 Mon Sep 17 00:00:00 2001
+From 183ad2832d2444aebd36e4fc3868b50ff88b6b1c Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 09:08:26 -0500
-Subject: [PATCH 24/73] Register TermSurf PDF component extension
+Subject: [PATCH 24/76] Register TermSurf PDF component extension
 
 ---
  content/libtermsurf_chromium/BUILD.gn         |   5 +
@@ -20,7 +20,7 @@ Subject: [PATCH 24/73] Register TermSurf PDF component extension
  create mode 100644 content/libtermsurf_chromium/extensions/ts_pdf_component_extension.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 1281f8319fa58..2405a44941416 100644
+index 1281f8319f..2405a44941 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -9,6 +9,8 @@ shared_library("libtermsurf_chromium") {
@@ -51,7 +51,7 @@ index 1281f8319fa58..2405a44941416 100644
      "//components/keyed_service/core",
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 new file mode 100644
-index 0000000000000..57a8dfea63124
+index 0000000000..57a8dfea63
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 @@ -0,0 +1,71 @@
@@ -128,7 +128,7 @@ index 0000000000000..57a8dfea63124
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.h b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.h
 new file mode 100644
-index 0000000000000..7443f3a48dfae
+index 0000000000..7443f3a48d
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.h
 @@ -0,0 +1,42 @@
@@ -175,7 +175,7 @@ index 0000000000000..7443f3a48dfae
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_COMPONENT_EXTENSION_RESOURCE_MANAGER_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_system.cc b/content/libtermsurf_chromium/extensions/ts_extension_system.cc
-index f93808a58b7d8..5b007c461a0db 100644
+index f93808a58b..5b007c461a 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extension_system.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_system.cc
 @@ -5,8 +5,10 @@
@@ -200,7 +200,7 @@ index f93808a58b7d8..5b007c461a0db 100644
  }
  
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
-index 7db2b9e9f45c1..bf9f7e8ffeb52 100644
+index 7db2b9e9f4..bf9f7e8ffe 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 @@ -11,6 +11,7 @@
@@ -240,7 +240,7 @@ index 7db2b9e9f45c1..bf9f7e8ffeb52 100644
  
  void TsExtensionsBrowserClient::BroadcastEventToRenderers(
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h
-index f654239f6a82b..6417afcdd07a4 100644
+index f654239f6a..6417afcdd0 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h
 @@ -20,6 +20,8 @@ class PrefService;
@@ -263,7 +263,7 @@ index f654239f6a82b..6417afcdd07a4 100644
    std::unique_ptr<extensions::KioskDelegate> kiosk_delegate_;
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 new file mode 100644
-index 0000000000000..e53142be57c46
+index 0000000000..e53142be57
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 @@ -0,0 +1,186 @@
@@ -455,7 +455,7 @@ index 0000000000000..e53142be57c46
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.h b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.h
 new file mode 100644
-index 0000000000000..8d7a2f832b6c9
+index 0000000000..8d7a2f832b
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.h
 @@ -0,0 +1,36 @@
@@ -496,7 +496,7 @@ index 0000000000000..8d7a2f832b6c9
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_PDF_COMPONENT_EXTENSION_H_
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index be93d2883c64c..675d587674dee 100644
+index be93d2883c..675d587674 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -113,6 +113,10 @@ void TsBrowserMainParts::InitializeBrowserContexts() {
@@ -511,5 +511,5 @@ index be93d2883c64c..675d587674dee 100644
        browser_context());
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

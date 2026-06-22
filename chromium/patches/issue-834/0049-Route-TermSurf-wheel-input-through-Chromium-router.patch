@@ -1,14 +1,14 @@
-From 7f3e288910ba0bad945ac5ccabd9dc0a0c2db3d0 Mon Sep 17 00:00:00 2001
+From c922e4638e0df6780bd57474ee7a33de56f63a25 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 08:24:42 -0500
-Subject: [PATCH 49/73] Route TermSurf wheel input through Chromium router
+Subject: [PATCH 49/76] Route TermSurf wheel input through Chromium router
 
 ---
  .../ts_browser_main_parts.cc                  | 85 ++++++++++++++++++-
  1 file changed, 83 insertions(+), 2 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 675d587674dee..7e3908d178ac0 100644
+index 675d587674..7e3908d178 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -13,9 +13,12 @@
@@ -122,5 +122,5 @@ index 675d587674dee..7e3908d178ac0 100644
  #endif
  }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

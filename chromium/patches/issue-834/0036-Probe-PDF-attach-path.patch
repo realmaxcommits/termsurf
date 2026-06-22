@@ -1,7 +1,7 @@
-From a89c9b74eea29591e5daca6708cf9b9db9aff0fd Mon Sep 17 00:00:00 2001
+From 8c6dacf838bacd7ab32b16329cf7ee1f0a9c5adf Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 13:37:03 -0500
-Subject: [PATCH 36/73] Probe PDF attach path
+Subject: [PATCH 36/76] Probe PDF attach path
 
 The stream wore a wrapper hat,
 The helper arrived after that.
@@ -20,7 +20,7 @@ So now we know where not to bat.
  8 files changed, 188 insertions(+), 33 deletions(-)
 
 diff --git a/chrome/browser/pdf/pdf_viewer_stream_manager.cc b/chrome/browser/pdf/pdf_viewer_stream_manager.cc
-index 9a569aeca5e34..fcf22882cb2cb 100644
+index 9a569aeca5..fcf22882cb 100644
 --- a/chrome/browser/pdf/pdf_viewer_stream_manager.cc
 +++ b/chrome/browser/pdf/pdf_viewer_stream_manager.cc
 @@ -11,6 +11,7 @@
@@ -60,7 +60,7 @@ index 9a569aeca5e34..fcf22882cb2cb 100644
  }
  
 diff --git a/content/libtermsurf_chromium/ts_content_client.cc b/content/libtermsurf_chromium/ts_content_client.cc
-index 48f05351f306a..45710d4ed076b 100644
+index 48f05351f3..45710d4ed0 100644
 --- a/content/libtermsurf_chromium/ts_content_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_client.cc
 @@ -5,15 +5,57 @@
@@ -133,7 +133,7 @@ index 48f05351f306a..45710d4ed076b 100644
      LOG(INFO) << "[issue-792-exp6] extension-scheme-registered scheme="
                << extensions::kExtensionScheme;
 diff --git a/content/libtermsurf_chromium/ts_content_client.h b/content/libtermsurf_chromium/ts_content_client.h
-index 9de8bc9f15d6b..6fe61366465db 100644
+index 9de8bc9f15..6fe6136646 100644
 --- a/content/libtermsurf_chromium/ts_content_client.h
 +++ b/content/libtermsurf_chromium/ts_content_client.h
 @@ -5,10 +5,14 @@
@@ -160,7 +160,7 @@ index 9de8bc9f15d6b..6fe61366465db 100644
  };
  
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.cc b/content/libtermsurf_chromium/ts_content_renderer_client.cc
-index c3249abf1ecdf..b3ad28199d92e 100644
+index c3249abf1e..b3ad28199d 100644
 --- a/content/libtermsurf_chromium/ts_content_renderer_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 @@ -4,20 +4,28 @@
@@ -251,7 +251,7 @@ index c3249abf1ecdf..b3ad28199d92e 100644
      RenderFrame* render_frame,
      const blink::WebPluginParams& params,
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.h b/content/libtermsurf_chromium/ts_content_renderer_client.h
-index 4b618fc35a6e4..d4242674ab698 100644
+index 4b618fc35a..d4242674ab 100644
 --- a/content/libtermsurf_chromium/ts_content_renderer_client.h
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.h
 @@ -6,8 +6,14 @@
@@ -281,7 +281,7 @@ index 4b618fc35a6e4..d4242674ab698 100644
                              const blink::WebPluginParams& params,
                              blink::WebPlugin** plugin) override;
 diff --git a/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc b/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
-index f7b0373a942be..a295638bdf271 100644
+index f7b0373a94..a295638bdf 100644
 --- a/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
 +++ b/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
 @@ -90,36 +90,35 @@ void ClearAllButFrameAncestors(network::mojom::URLResponseHead* response_head) {
@@ -406,7 +406,7 @@ index f7b0373a942be..a295638bdf271 100644
  }
  
 diff --git a/extensions/browser/guest_view/mime_handler_view/mime_handler_view_attach_helper.cc b/extensions/browser/guest_view/mime_handler_view/mime_handler_view_attach_helper.cc
-index 27568610cf4ea..db3397ecde932 100644
+index 27568610cf..db3397ecde 100644
 --- a/extensions/browser/guest_view/mime_handler_view/mime_handler_view_attach_helper.cc
 +++ b/extensions/browser/guest_view/mime_handler_view/mime_handler_view_attach_helper.cc
 @@ -11,6 +11,7 @@
@@ -428,7 +428,7 @@ index 27568610cf4ea..db3397ecde932 100644
                                    token);
  }
 diff --git a/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc b/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc
-index b4b761d0bde81..897d420db6ef4 100644
+index b4b761d0bd..897d420db6 100644
 --- a/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc
 +++ b/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc
 @@ -5,6 +5,7 @@
@@ -530,5 +530,5 @@ index b4b761d0bde81..897d420db6ef4 100644
  
  void MimeHandlerViewEmbedder::OnFrameSandboxed() {
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

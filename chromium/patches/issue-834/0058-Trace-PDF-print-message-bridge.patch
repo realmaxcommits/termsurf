@@ -1,7 +1,7 @@
-From a1700bc8473edaec090fdcaac301b02c2dbbb533 Mon Sep 17 00:00:00 2001
+From 3949435e8f7f6a1e3525eaa708afa0b6e6c0b1e5 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 14:12:52 -0500
-Subject: [PATCH 58/73] Trace PDF print message bridge
+Subject: [PATCH 58/76] Trace PDF print message bridge
 
 ---
  chrome/browser/resources/pdf/controller.ts    | 53 ++++++++++++++++++
@@ -13,7 +13,7 @@ Subject: [PATCH 58/73] Trace PDF print message bridge
  6 files changed, 190 insertions(+), 17 deletions(-)
 
 diff --git a/chrome/browser/resources/pdf/controller.ts b/chrome/browser/resources/pdf/controller.ts
-index 22a6126e84b3c..e2e30939a7166 100644
+index 22a6126e84..e2e30939a7 100644
 --- a/chrome/browser/resources/pdf/controller.ts
 +++ b/chrome/browser/resources/pdf/controller.ts
 @@ -3,6 +3,7 @@
@@ -105,7 +105,7 @@ index 22a6126e84b3c..e2e30939a7166 100644
  
      this.plugin_.postMessage = port.postMessage.bind(port);
 diff --git a/chrome/browser/resources/pdf/pdf_viewer.ts b/chrome/browser/resources/pdf/pdf_viewer.ts
-index 32716bf47ea71..ccdc0495448fd 100644
+index 32716bf47e..ccdc049544 100644
 --- a/chrome/browser/resources/pdf/pdf_viewer.ts
 +++ b/chrome/browser/resources/pdf/pdf_viewer.ts
 @@ -95,6 +95,29 @@ type SaveToDriveStatus = chrome.pdfViewerPrivate.SaveToDriveStatus;
@@ -149,7 +149,7 @@ index 32716bf47ea71..ccdc0495448fd 100644
      assert(this.currentController);
      this.currentController.print();
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
-index 252bffa1e73a4..8ae248aad7510 100644
+index 252bffa1e7..8ae248aad7 100644
 --- a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 @@ -38,6 +38,19 @@ bool IsTermSurfPdfPrintInterceptActive() {
@@ -182,7 +182,7 @@ index 252bffa1e73a4..8ae248aad7510 100644
    webui::SetLoadTimeDataDefaults(l10n_util::GetApplicationLocale(std::string()),
                                   replacements);
 diff --git a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
-index 99dc53d387521..f499f61de8686 100644
+index 99dc53d387..f499f61de8 100644
 --- a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 @@ -38,6 +38,19 @@ bool IsTermSurfPdfPrintInterceptActive() {
@@ -215,7 +215,7 @@ index 99dc53d387521..f499f61de8686 100644
    return dict;
  }
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index a20d7bbed4576..7c86587763a2e 100644
+index a20d7bbed4..7c86587763 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -65,17 +65,21 @@ namespace {
@@ -282,7 +282,7 @@ index a20d7bbed4576..7c86587763a2e 100644
  
  mojo::PendingRemote<network::mojom::URLLoaderFactory>
 diff --git a/pdf/pdf_view_web_plugin.cc b/pdf/pdf_view_web_plugin.cc
-index 8ed74ea97a098..ec2382ca22263 100644
+index 8ed74ea97a..ec2382ca22 100644
 --- a/pdf/pdf_view_web_plugin.cc
 +++ b/pdf/pdf_view_web_plugin.cc
 @@ -157,6 +157,10 @@ constexpr std::string_view kChromeExtensionHost =
@@ -377,5 +377,5 @@ index 8ed74ea97a098..ec2382ca22263 100644
  }
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

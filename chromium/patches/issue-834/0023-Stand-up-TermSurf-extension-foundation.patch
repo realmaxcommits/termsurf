@@ -1,7 +1,7 @@
-From eba06286b8700a0fae4e69d32f7967a2be015218 Mon Sep 17 00:00:00 2001
+From a9be8bc6e5e76f58e205f9e5ec6488062acc86e2 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 08:28:45 -0500
-Subject: [PATCH 23/73] Stand up TermSurf extension foundation
+Subject: [PATCH 23/76] Stand up TermSurf extension foundation
 
 ---
  content/libtermsurf_chromium/BUILD.gn         |  35 +-
@@ -49,7 +49,7 @@ Subject: [PATCH 23/73] Stand up TermSurf extension foundation
  create mode 100644 content/libtermsurf_chromium/ts_content_renderer_client.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index a2438eb4ce200..1281f8319fa58 100644
+index a2438eb4ce..1281f8319f 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -7,12 +7,30 @@ import("//build/config/ui.gni")
@@ -112,7 +112,7 @@ index a2438eb4ce200..1281f8319fa58 100644
    if (is_mac) {
 diff --git a/content/libtermsurf_chromium/extensions/ts_browser_context_keyed_service_factories.cc b/content/libtermsurf_chromium/extensions/ts_browser_context_keyed_service_factories.cc
 new file mode 100644
-index 0000000000000..5713cd9cc049f
+index 0000000000..5713cd9cc0
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_browser_context_keyed_service_factories.cc
 @@ -0,0 +1,15 @@
@@ -133,7 +133,7 @@ index 0000000000000..5713cd9cc049f
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_browser_context_keyed_service_factories.h b/content/libtermsurf_chromium/extensions/ts_browser_context_keyed_service_factories.h
 new file mode 100644
-index 0000000000000..d737adc5f10fb
+index 0000000000..d737adc5f1
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_browser_context_keyed_service_factories.h
 @@ -0,0 +1,14 @@
@@ -153,7 +153,7 @@ index 0000000000000..d737adc5f10fb
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_BROWSER_CONTEXT_KEYED_SERVICE_FACTORIES_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_prefs.cc b/content/libtermsurf_chromium/extensions/ts_extension_prefs.cc
 new file mode 100644
-index 0000000000000..c542e5374d852
+index 0000000000..c542e5374d
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_prefs.cc
 @@ -0,0 +1,52 @@
@@ -211,7 +211,7 @@ index 0000000000000..c542e5374d852
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_prefs.h b/content/libtermsurf_chromium/extensions/ts_extension_prefs.h
 new file mode 100644
-index 0000000000000..a02a64b9eb1fb
+index 0000000000..a02a64b9eb
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_prefs.h
 @@ -0,0 +1,24 @@
@@ -241,7 +241,7 @@ index 0000000000000..a02a64b9eb1fb
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSION_PREFS_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_system.cc b/content/libtermsurf_chromium/extensions/ts_extension_system.cc
 new file mode 100644
-index 0000000000000..f93808a58b7d8
+index 0000000000..f93808a58b
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_system.cc
 @@ -0,0 +1,109 @@
@@ -356,7 +356,7 @@ index 0000000000000..f93808a58b7d8
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_system.h b/content/libtermsurf_chromium/extensions/ts_extension_system.h
 new file mode 100644
-index 0000000000000..7eb323ca03735
+index 0000000000..7eb323ca03
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_system.h
 @@ -0,0 +1,63 @@
@@ -425,7 +425,7 @@ index 0000000000000..7eb323ca03735
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSION_SYSTEM_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_system_factory.cc b/content/libtermsurf_chromium/extensions/ts_extension_system_factory.cc
 new file mode 100644
-index 0000000000000..9ca131b349235
+index 0000000000..9ca131b349
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_system_factory.cc
 @@ -0,0 +1,50 @@
@@ -481,7 +481,7 @@ index 0000000000000..9ca131b349235
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_system_factory.h b/content/libtermsurf_chromium/extensions/ts_extension_system_factory.h
 new file mode 100644
-index 0000000000000..b9a77c2e49921
+index 0000000000..b9a77c2e49
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_system_factory.h
 @@ -0,0 +1,40 @@
@@ -527,7 +527,7 @@ index 0000000000000..b9a77c2e49921
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSION_SYSTEM_FACTORY_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
 new file mode 100644
-index 0000000000000..63606adf57ee2
+index 0000000000..63606adf57
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
 @@ -0,0 +1,42 @@
@@ -575,7 +575,7 @@ index 0000000000000..63606adf57ee2
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.h b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.h
 new file mode 100644
-index 0000000000000..92db72f07ff2c
+index 0000000000..92db72f07f
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.h
 @@ -0,0 +1,38 @@
@@ -619,7 +619,7 @@ index 0000000000000..92db72f07ff2c
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSIONS_API_PROVIDER_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 new file mode 100644
-index 0000000000000..7db2b9e9f45c1
+index 0000000000..7db2b9e9f4
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 @@ -0,0 +1,461 @@
@@ -1086,7 +1086,7 @@ index 0000000000000..7db2b9e9f45c1
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h
 new file mode 100644
-index 0000000000000..f654239f6a82b
+index 0000000000..f654239f6a
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.h
 @@ -0,0 +1,138 @@
@@ -1230,7 +1230,7 @@ index 0000000000000..f654239f6a82b
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSIONS_BROWSER_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 new file mode 100644
-index 0000000000000..64d7202fce381
+index 0000000000..64d7202fce
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 @@ -0,0 +1,111 @@
@@ -1347,7 +1347,7 @@ index 0000000000000..64d7202fce381
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.h b/content/libtermsurf_chromium/extensions/ts_extensions_client.h
 new file mode 100644
-index 0000000000000..7f8cea3b083aa
+index 0000000000..7f8cea3b08
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.h
 @@ -0,0 +1,54 @@
@@ -1407,7 +1407,7 @@ index 0000000000000..7f8cea3b083aa
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSIONS_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_renderer_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_renderer_client.cc
 new file mode 100644
-index 0000000000000..4082f158c758c
+index 0000000000..4082f158c7
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_renderer_client.cc
 @@ -0,0 +1,20 @@
@@ -1433,7 +1433,7 @@ index 0000000000000..4082f158c758c
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_renderer_client.h b/content/libtermsurf_chromium/extensions/ts_extensions_renderer_client.h
 new file mode 100644
-index 0000000000000..2fa1c1f28ba0f
+index 0000000000..2fa1c1f28b
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_renderer_client.h
 @@ -0,0 +1,26 @@
@@ -1464,7 +1464,7 @@ index 0000000000000..2fa1c1f28ba0f
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSIONS_RENDERER_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 9b8da5ccfcc88..0749a023e2d2e 100644
+index 9b8da5ccfc..0749a023e2 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -5,24 +5,25 @@
@@ -1566,7 +1566,7 @@ index 9b8da5ccfcc88..0749a023e2d2e 100644
        path.Append(FILE_PATH_LITERAL("Network"));
    context_params->file_paths->unsandboxed_data_path = path;
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 7c15be0e1192d..be93d2883c64c 100644
+index 7c15be0e11..be93d2883c 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -13,11 +13,19 @@
@@ -1681,7 +1681,7 @@ index 7c15be0e1192d..be93d2883c64c 100644
  
  void* TsBrowserMainParts::CreateBrowserContext(const char* path) {
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.h b/content/libtermsurf_chromium/ts_browser_main_parts.h
-index 17c5448a05d71..7f039d699cf1e 100644
+index 17c5448a05..7f039d699c 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.h
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.h
 @@ -8,6 +8,7 @@
@@ -1797,7 +1797,7 @@ index 17c5448a05d71..7f039d699cf1e 100644
  }  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.cc b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 new file mode 100644
-index 0000000000000..23bbb229d95fb
+index 0000000000..23bbb229d9
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 @@ -0,0 +1,72 @@
@@ -1875,7 +1875,7 @@ index 0000000000000..23bbb229d95fb
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.h b/content/libtermsurf_chromium/ts_content_renderer_client.h
 new file mode 100644
-index 0000000000000..4b618fc35a6e4
+index 0000000000..4b618fc35a
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.h
 @@ -0,0 +1,47 @@
@@ -1927,7 +1927,7 @@ index 0000000000000..4b618fc35a6e4
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_CONTENT_RENDERER_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/ts_main_delegate.cc b/content/libtermsurf_chromium/ts_main_delegate.cc
-index fff1576276025..1f0df20afe62b 100644
+index fff1576276..1f0df20afe 100644
 --- a/content/libtermsurf_chromium/ts_main_delegate.cc
 +++ b/content/libtermsurf_chromium/ts_main_delegate.cc
 @@ -13,6 +13,7 @@
@@ -1949,7 +1949,7 @@ index fff1576276025..1f0df20afe62b 100644
 +
  }  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_main_delegate.h b/content/libtermsurf_chromium/ts_main_delegate.h
-index 9a6d57da39a99..809c25af5c2ba 100644
+index 9a6d57da39..809c25af5c 100644
 --- a/content/libtermsurf_chromium/ts_main_delegate.h
 +++ b/content/libtermsurf_chromium/ts_main_delegate.h
 @@ -5,10 +5,14 @@
@@ -1979,5 +1979,5 @@ index 9a6d57da39a99..809c25af5c2ba 100644
  
  }  // namespace content
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

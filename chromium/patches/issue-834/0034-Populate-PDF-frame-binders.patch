@@ -1,7 +1,7 @@
-From d032f15e5629daa4fc6989e4dfed0c9a72a48d4f Mon Sep 17 00:00:00 2001
+From 7dc687d723af4c4b26636f3f2036f74d416c099f Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 12:30:57 -0500
-Subject: [PATCH 34/73] Populate PDF frame binders
+Subject: [PATCH 34/76] Populate PDF frame binders
 
 The frame had no committed name,
 But SiteInstance knew the same.
@@ -14,7 +14,7 @@ And KeepAlive bowed out of blame.
  2 files changed, 68 insertions(+), 9 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
-index 1e018264f21af..5babef1c76271 100644
+index 1e018264f2..5babef1c76 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 @@ -21,6 +21,7 @@
@@ -37,7 +37,7 @@ index 1e018264f21af..5babef1c76271 100644
                                              extension);
  }
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 343e3747b4331..8fc50d86c7db2 100644
+index 343e3747b4..8fc50d86c7 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -24,6 +24,7 @@
@@ -134,5 +134,5 @@ index 343e3747b4331..8fc50d86c7db2 100644
    }
    // Add BadgeService stub (Issue 655).
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

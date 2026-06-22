@@ -1,14 +1,14 @@
-From 304dd08c239843a1303c3c132cb3a8ad0ef2b2d6 Mon Sep 17 00:00:00 2001
+From 53e113e9ac5216d7cba1349aef1696d37d8ace77 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 14:33:58 -0500
-Subject: [PATCH 59/73] Probe PDF print intercept guard
+Subject: [PATCH 59/76] Probe PDF print intercept guard
 
 ---
  pdf/pdf_view_web_plugin.cc | 158 ++++++++++++++++++++++++++++++++-----
  1 file changed, 138 insertions(+), 20 deletions(-)
 
 diff --git a/pdf/pdf_view_web_plugin.cc b/pdf/pdf_view_web_plugin.cc
-index ec2382ca22263..808e4c6d65d0f 100644
+index ec2382ca22..808e4c6d65 100644
 --- a/pdf/pdf_view_web_plugin.cc
 +++ b/pdf/pdf_view_web_plugin.cc
 @@ -162,31 +162,52 @@ constexpr char kTsPdfPrintBridgeTraceSwitch[] =
@@ -219,5 +219,5 @@ index ec2382ca22263..808e4c6d65d0f 100644
      return;
    }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

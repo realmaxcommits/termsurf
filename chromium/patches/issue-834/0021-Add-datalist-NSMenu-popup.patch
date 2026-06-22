@@ -1,7 +1,7 @@
-From 2330eb33eabdb6d2ac2fd6146945a5d037875c6d Mon Sep 17 00:00:00 2001
+From 4cb5a7fa4553be77b144b3c718482c4bb96a19a1 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 09:35:47 -0500
-Subject: [PATCH 21/73] Add datalist NSMenu popup
+Subject: [PATCH 21/76] Add datalist NSMenu popup
 
 A datalist knocked, but no one came,
 So Mojo ferried every name.
@@ -24,7 +24,7 @@ And Surfari rang the tiny bell.
  create mode 100644 content/shell/renderer/shell_datalist_autofill_client.h
 
 diff --git a/content/shell/BUILD.gn b/content/shell/BUILD.gn
-index 2f62da6f78d40..3c5e633f7d920 100644
+index 2f62da6f78..3c5e633f7d 100644
 --- a/content/shell/BUILD.gn
 +++ b/content/shell/BUILD.gn
 @@ -194,6 +194,7 @@ static_library("content_shell_lib") {
@@ -77,7 +77,7 @@ index 2f62da6f78d40..3c5e633f7d920 100644
  }
  
 diff --git a/content/shell/browser/shell_content_browser_client.cc b/content/shell/browser/shell_content_browser_client.cc
-index cc6bc28cd21d7..4d5d3cda63122 100644
+index cc6bc28cd2..4d5d3cda63 100644
 --- a/content/shell/browser/shell_content_browser_client.cc
 +++ b/content/shell/browser/shell_content_browser_client.cc
 @@ -108,6 +108,7 @@
@@ -101,7 +101,7 @@ index cc6bc28cd21d7..4d5d3cda63122 100644
        &BindMediaFoundationPreferences);
 diff --git a/content/shell/browser/shell_datalist_autofill_driver.h b/content/shell/browser/shell_datalist_autofill_driver.h
 new file mode 100644
-index 0000000000000..314ebe64b1e7f
+index 0000000000..314ebe64b1
 --- /dev/null
 +++ b/content/shell/browser/shell_datalist_autofill_driver.h
 @@ -0,0 +1,23 @@
@@ -130,7 +130,7 @@ index 0000000000000..314ebe64b1e7f
 +#endif  // CONTENT_SHELL_BROWSER_SHELL_DATALIST_AUTOFILL_DRIVER_H_
 diff --git a/content/shell/browser/shell_datalist_autofill_driver_mac.mm b/content/shell/browser/shell_datalist_autofill_driver_mac.mm
 new file mode 100644
-index 0000000000000..85dd5cbd8a87f
+index 0000000000..85dd5cbd8a
 --- /dev/null
 +++ b/content/shell/browser/shell_datalist_autofill_driver_mac.mm
 @@ -0,0 +1,207 @@
@@ -343,7 +343,7 @@ index 0000000000000..85dd5cbd8a87f
 +}  // namespace content
 diff --git a/content/shell/common/datalist_autofill.mojom b/content/shell/common/datalist_autofill.mojom
 new file mode 100644
-index 0000000000000..fefca82c90285
+index 0000000000..fefca82c90
 --- /dev/null
 +++ b/content/shell/common/datalist_autofill.mojom
 @@ -0,0 +1,20 @@
@@ -368,7 +368,7 @@ index 0000000000000..fefca82c90285
 +  HideDatalistPopup();
 +};
 diff --git a/content/shell/renderer/shell_content_renderer_client.cc b/content/shell/renderer/shell_content_renderer_client.cc
-index 26277e4794b71..26d4143b5b328 100644
+index 26277e4794..26d4143b5b 100644
 --- a/content/shell/renderer/shell_content_renderer_client.cc
 +++ b/content/shell/renderer/shell_content_renderer_client.cc
 @@ -11,7 +11,6 @@
@@ -447,7 +447,7 @@ index 26277e4794b71..26d4143b5b328 100644
  bool ShellContentRendererClient::OverrideCreatePlugin(
 diff --git a/content/shell/renderer/shell_datalist_autofill_client.cc b/content/shell/renderer/shell_datalist_autofill_client.cc
 new file mode 100644
-index 0000000000000..a92f96e782807
+index 0000000000..a92f96e782
 --- /dev/null
 +++ b/content/shell/renderer/shell_datalist_autofill_client.cc
 @@ -0,0 +1,335 @@
@@ -788,7 +788,7 @@ index 0000000000000..a92f96e782807
 +}  // namespace content
 diff --git a/content/shell/renderer/shell_datalist_autofill_client.h b/content/shell/renderer/shell_datalist_autofill_client.h
 new file mode 100644
-index 0000000000000..e2c0b884ae713
+index 0000000000..e2c0b884ae
 --- /dev/null
 +++ b/content/shell/renderer/shell_datalist_autofill_client.h
 @@ -0,0 +1,76 @@
@@ -869,5 +869,5 @@ index 0000000000000..e2c0b884ae713
 +
 +#endif  // CONTENT_SHELL_RENDERER_SHELL_DATALIST_AUTOFILL_CLIENT_H_
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

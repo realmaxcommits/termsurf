@@ -1,7 +1,7 @@
-From 8432e4599aa6b42ba1aff723c9a48835d4060d37 Mon Sep 17 00:00:00 2001
+From f3ead0f994281a6fd620255e08faf3855d6a8aec Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 22 May 2026 07:30:40 -0500
-Subject: [PATCH 11/73] Trace native popup event loss
+Subject: [PATCH 11/76] Trace native popup event loss
 
 The clicks went missing in the mist,
 So every border got a list:
@@ -34,7 +34,7 @@ Now AppKit coughs up names at night.
  23 files changed, 3894 insertions(+), 364 deletions(-)
 
 diff --git a/components/input/render_widget_host_input_event_router.cc b/components/input/render_widget_host_input_event_router.cc
-index 0c446670c0f64..4d2787f2c4c46 100644
+index 0c446670c0..4d2787f2c4 100644
 --- a/components/input/render_widget_host_input_event_router.cc
 +++ b/components/input/render_widget_host_input_event_router.cc
 @@ -5,13 +5,16 @@
@@ -403,10 +403,10 @@ index 0c446670c0f64..4d2787f2c4c46 100644
      return FindMouseEventTarget(
          root_view, static_cast<const blink::WebMouseEvent&>(event));
 diff --git a/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm b/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
-index 7af7fde9ed2c7..1ef5a7416efc0 100644
+index 7af7fde9ed..1ef5a7416e 100644
 --- a/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
 +++ b/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
-@@ -92,7 +92,8 @@ CG_EXTERN CGError CGSSetWindowCaptureExcludeShape(CGSConnectionID cid,
+@@ -92,7 +92,8 @@ display::Display GetDisplayForWindow(NSWindow* window) {
  }
  
  bool Issue779TraceEnabled() {
@@ -416,7 +416,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    return enabled;
  }
  
-@@ -109,17 +110,44 @@ void Issue779TraceAnnounce() {
+@@ -109,17 +110,44 @@ std::string Issue779NSRectToString(NSRect rect) {
  }
  
  std::string Issue779WindowFrame(NSWindow* window) {
@@ -474,7 +474,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    if (left_found) {
      return left_rank->second < right_rank->second ? NSOrderedAscending
-@@ -355,8 +384,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -355,8 +384,9 @@ gfx::Size NativeWidgetNSWindowBridge::GetWindowSizeForClientSize(
  NativeWidgetNSWindowBridge* NativeWidgetNSWindowBridge::GetFromId(
      uint64_t bridged_native_widget_id) {
    auto found = GetIdToWidgetImplMap().find(bridged_native_widget_id);
@@ -485,7 +485,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    return found->second;
  }
  
-@@ -671,6 +701,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -671,6 +701,9 @@ void NativeWidgetNSWindowBridge::SetBounds(
      Issue779TraceAnnounce();
      NSWindow* parent_window = [window_ parentWindow];
      LOG(INFO) << "[issue-779-trace] NativeWidgetNSWindowBridge::SetBounds"
@@ -495,7 +495,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
                << " bridge=" << static_cast<void*>(this)
                << " window=" << (__bridge void*)window_
                << " parent_bridge=" << static_cast<void*>(parent_.get())
-@@ -681,11 +714,16 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -681,11 +714,16 @@ void NativeWidgetNSWindowBridge::SetBounds(
                        ? maximum_content_size->ToString()
                        : std::string("none"))
                << " window_frame_before=" << Issue779WindowFrame(window_)
@@ -514,7 +514,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
                << " wants_visible=" << wants_to_be_visible_
                << " window_visible=" << window_visible_;
    }
-@@ -734,14 +772,25 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -734,14 +772,25 @@ void NativeWidgetNSWindowBridge::SetBounds(
      NSWindow* parent_window = [window_ parentWindow];
      LOG(INFO) << "[issue-779-trace] NativeWidgetNSWindowBridge::SetBounds"
                   " applied"
@@ -541,7 +541,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    }
  
    // If the window has focus but is not on the active space and the window was
-@@ -808,8 +857,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -808,8 +857,9 @@ void NativeWidgetNSWindowBridge::SetSizeAndCenter(
  }
  
  void NativeWidgetNSWindowBridge::DestroyContentView() {
@@ -552,7 +552,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    [bridged_view_ clearView];
    bridged_view_id_mapping_.reset();
    bridged_view_ = nil;
-@@ -861,8 +911,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -861,8 +911,9 @@ void NativeWidgetNSWindowBridge::CreateContentView(
  }
  
  void NativeWidgetNSWindowBridge::CloseWindow() {
@@ -563,7 +563,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    // Make a local variable of the window on the stack so that the block can
    // capture a reference to it.
-@@ -902,8 +953,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -902,8 +953,9 @@ void NativeWidgetNSWindowBridge::CloseWindow() {
  
    // Defer closing windows until after fullscreen transitions complete.
    fullscreen_controller_.OnWindowWantsToClose();
@@ -574,7 +574,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    // Many tests assume that base::RunLoop().RunUntilIdle() is always sufficient
    // to execute a close. However, in rare cases, -performSelector:..afterDelay:0
-@@ -929,21 +981,28 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -929,21 +981,28 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
      NSWindow* parent_window = [window_ parentWindow];
@@ -618,7 +618,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    }
  
    // During session restore this method gets called from RestoreTabsToBrowser()
-@@ -1040,39 +1099,43 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1040,39 +1099,43 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
  
      [window_ orderOut:nil];
      if (Issue779TraceEnabled()) {
@@ -676,7 +676,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
                    << " event=blocked_by_hidden_ancestor"
                    << " bridge=" << static_cast<void*>(this)
                    << " ancestor=" << static_cast<void*>(ancestor)
-@@ -1092,18 +1155,20 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1092,18 +1155,20 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
    if (IsWindowModalSheet()) {
      ShowAsModalSheet();
      if (Issue779TraceEnabled()) {
@@ -704,7 +704,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    if (new_state == WindowVisibilityState::kShowAndActivateWindow) {
      [window_ makeKeyAndOrderFront:nil];
-@@ -1111,14 +1176,14 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1111,14 +1176,14 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
        [NSApp activateIgnoringOtherApps:YES];
      }
      if (Issue779TraceEnabled()) {
@@ -727,7 +727,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
      }
    } else if (new_state == WindowVisibilityState::kShowInactive && !parent_ &&
               ![window_ isMiniaturized]) {
-@@ -1131,7 +1196,8 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1131,7 +1196,8 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
        [window_ orderWindow:NSWindowBelow
                  relativeTo:NSApp.mainWindow.windowNumber];
        if (Issue779TraceEnabled()) {
@@ -737,7 +737,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
                    << " event=orderWindowBelowMain"
                    << " bridge=" << static_cast<void*>(this)
                    << " window=" << (__bridge void*)window_
-@@ -1145,7 +1211,8 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1145,7 +1211,8 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
        // the front and trigger a space switch.
        [window_ orderFrontKeepWindowKeyState];
        if (Issue779TraceEnabled()) {
@@ -747,7 +747,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
                    << " event=orderFrontKeepWindowKeyState"
                    << " bridge=" << static_cast<void*>(this)
                    << " window=" << (__bridge void*)window_
-@@ -1181,10 +1248,12 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1181,10 +1248,12 @@ void NativeWidgetNSWindowBridge::SetTransitionsToAnimate(
  }
  
  void NativeWidgetNSWindowBridge::AcquireCapture() {
@@ -762,7 +762,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    mouse_capture_ = std::make_unique<CocoaMouseCapture>(this);
    host_->OnMouseCaptureActiveChanged(true);
-@@ -1559,8 +1628,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1559,8 +1628,9 @@ void NativeWidgetNSWindowBridge::OnWindowDidEndLiveResize() {
  
  void NativeWidgetNSWindowBridge::OnVisibilityChanged() {
    const bool window_visible = [window_ isVisible];
@@ -773,7 +773,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    window_visible_ = window_visible;
  
-@@ -1570,22 +1640,25 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1570,22 +1640,25 @@ void NativeWidgetNSWindowBridge::OnVisibilityChanged() {
    // window - we might not need that.
    if (window_visible_) {
      wants_to_be_visible_ = true;
@@ -802,7 +802,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    NotifyVisibilityChangeDown();
    host_->OnVisibilityChanged(window_visible_);
-@@ -1614,8 +1687,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1614,8 +1687,9 @@ void NativeWidgetNSWindowBridge::OnWindowKeyStatusChangedTo(bool is_key) {
        [NSApp isFullKeyboardAccessEnabled]);
    // If the window just became key, this is a good chance to add child windows
    // from when the window wasn't on the current space.
@@ -813,7 +813,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  }
  
  void NativeWidgetNSWindowBridge::SetSizeConstraints(const gfx::Size& min_size,
-@@ -1624,8 +1698,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1624,8 +1698,9 @@ void NativeWidgetNSWindowBridge::SetSizeConstraints(const gfx::Size& min_size,
                                                      bool is_maximizable) {
    // Don't modify the size constraints or fullscreen collection behavior while
    // in fullscreen or during a transition.
@@ -824,7 +824,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    bool shows_resize_controls =
        is_resizable && (min_size.IsEmpty() || min_size != max_size);
-@@ -1675,12 +1750,14 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1675,12 +1750,14 @@ void NativeWidgetNSWindowBridge::SortSubviews(
      const std::vector<uint64_t>& attached_subview_ids) {
    // Ignore layer manipulation during a Close(). This can be reached during the
    // orderOut: in Close(), which notifies visibility changes to Views.
@@ -841,7 +841,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    }
    [bridged_view_ sortSubviewsUsingFunction:&SubviewSorter context:&rank];
  }
-@@ -1704,14 +1781,16 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1704,14 +1781,16 @@ bool NativeWidgetNSWindowBridge::ShouldRunCustomAnimationFor(
    // Custom animations are only used for tab-modals.
    bool widget_is_modal = false;
    host_->GetWidgetIsModal(&widget_is_modal);
@@ -860,7 +860,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
            switches::kDisableModalAnimations)) {
-@@ -1788,8 +1867,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1788,8 +1867,9 @@ void NativeWidgetNSWindowBridge::FullscreenControllerSetFrame(
      base::OnceCallback<void()> completion_callback) {
    NSRect ns_frame = gfx::ScreenRectToNSRect(frame);
    base::TimeDelta transition_time = base::Seconds(0);
@@ -871,7 +871,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    __block base::OnceCallback<void()> complete = std::move(completion_callback);
    [NSAnimationContext
-@@ -1812,8 +1892,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1812,8 +1892,9 @@ void NativeWidgetNSWindowBridge::FullscreenControllerToggleFullscreen() {
    // transitioning window (crbug.com/1338659) or changing the z-order of
    // windows on the previous space. Making the window key here seems to
    // alleviate those apparent defects (crbug.com/1392542).
@@ -882,7 +882,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  }
  
  void NativeWidgetNSWindowBridge::FullscreenControllerCloseWindow() {
-@@ -1928,8 +2009,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1928,8 +2009,9 @@ void NativeWidgetNSWindowBridge::MoveToActiveFullscreenSpace() {
  
  void NativeWidgetNSWindowBridge::SetZoomed(bool zoomed) {
    const bool window_zoomed = [window_ isZoomed];
@@ -893,7 +893,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    [window_ performZoom:nil];
  }
  
-@@ -1944,8 +2026,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1944,8 +2026,9 @@ void NativeWidgetNSWindowBridge::EnterFullscreen(int64_t target_display_id) {
    // instead of relying on AppKit to do it, and not worry that
    // OnVisibilityChanged() won't be called for externally triggered fullscreen
    // requests.
@@ -904,7 +904,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    // Enable fullscreen collection behavior because:
    // 1: -[NSWindow toggleFullscreen:] would otherwise be ignored,
-@@ -1984,14 +2067,14 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1984,14 +2067,14 @@ void NativeWidgetNSWindowBridge::SetCanAppearInExistingFullscreenSpaces(
  }
  
  void NativeWidgetNSWindowBridge::SetMiniaturized(bool miniaturized) {
@@ -922,7 +922,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    } else {
      [window_ deminiaturize:nil];
    }
-@@ -2038,16 +2121,18 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2038,16 +2121,18 @@ void NativeWidgetNSWindowBridge::SetCALayerParams(
    // TODO(danakj): We should avoid lossy conversions to integer DIPs.
    gfx::Size frame_dip_size = gfx::ToFlooredSize(gfx::ConvertSizeToDips(
        ca_layer_params.pixel_size, ca_layer_params.scale_factor));
@@ -943,7 +943,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    if (invalidate_shadow_on_frame_swap_) {
      invalidate_shadow_on_frame_swap_ = false;
-@@ -2137,20 +2222,24 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2137,20 +2222,24 @@ void NativeWidgetNSWindowBridge::OrderChildren() {
    // Bail here (and call OrderChildren() in a few places) to defer adding
    // children until the window is visible.
    NSWindow* window = window_;
@@ -972,7 +972,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
        if (immersive_mode_controller_ &&
            immersive_mode_controller_->overlay_window() == child_window) {
          continue;
-@@ -2174,8 +2263,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2174,8 +2263,9 @@ void NativeWidgetNSWindowBridge::RemoveOrDestroyChildren() {
  
  void NativeWidgetNSWindowBridge::CheckAndNotifyZoomedStateChanged() {
    const bool window_zoomed = [window_ isZoomed];
@@ -983,7 +983,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
  
    window_zoomed_ = window_zoomed;
  
-@@ -2235,18 +2325,21 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2235,18 +2325,21 @@ void NativeWidgetNSWindowBridge::UpdateWindowGeometry() {
    CheckAndNotifyZoomedStateChanged();
    CheckAndNotifyAllWorkspacesStateChanged();
  
@@ -1009,7 +1009,7 @@ index 7af7fde9ed2c7..1ef5a7416efc0 100644
    host_->OnWindowDisplayChanged(GetDisplayForWindow(window_));
  }
 diff --git a/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm b/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm
-index f1b928a61f575..7b10301283459 100644
+index f1b928a61f..7b10301283 100644
 --- a/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm
 +++ b/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm
 @@ -4,9 +4,9 @@
@@ -1023,7 +1023,7 @@ index f1b928a61f575..7b10301283459 100644
  #include <string>
  
  #include "base/apple/bridging.h"
-@@ -62,6 +62,31 @@ void Issue779TraceAnnounce() {
+@@ -62,6 +62,31 @@ std::string Issue779NSRectToString(NSRect rect) {
    return base::SysNSStringToUTF8(NSStringFromRect(rect));
  }
  
@@ -1055,7 +1055,7 @@ index f1b928a61f575..7b10301283459 100644
  }  // namespace
  
  RenderWidgetHostNSViewBridge::RenderWidgetHostNSViewBridge(
-@@ -139,8 +164,9 @@ void Issue779TraceAnnounce() {
+@@ -139,8 +164,9 @@ void RenderWidgetHostNSViewBridge::MakeFirstResponder() {
  }
  
  void RenderWidgetHostNSViewBridge::DisableDisplay() {
@@ -1066,7 +1066,7 @@ index f1b928a61f575..7b10301283459 100644
    SetBackgroundColor(SK_ColorTRANSPARENT);
    display_ca_layer_tree_.reset();
    display_disabled_ = true;
-@@ -157,8 +183,9 @@ void Issue779TraceAnnounce() {
+@@ -157,8 +183,9 @@ void RenderWidgetHostNSViewBridge::SetBounds(const gfx::Rect& rect) {
    // SetSize() again. On Cocoa, we rely on the Cocoa view struture and resizer
    // flags to keep things sized properly. On the other hand, if the size is not
    // empty then this is a valid request for a pop-up.
@@ -1077,7 +1077,7 @@ index f1b928a61f575..7b10301283459 100644
  
    // Ignore the position of |rect| for non-popup rwhvs. This is because
    // background tabs do not have a window, but the window is required for the
-@@ -174,10 +201,11 @@ void Issue779TraceAnnounce() {
+@@ -174,10 +201,11 @@ void RenderWidgetHostNSViewBridge::SetBounds(const gfx::Rect& rect) {
      // The position of |rect| is screen coordinate system and we have to
      // consider Cocoa coordinate system is upside-down and also multi-screen.
      NSRect frame = gfx::ScreenRectToNSRect(rect);
@@ -1091,7 +1091,7 @@ index f1b928a61f575..7b10301283459 100644
    } else {
      BaseView* superview = static_cast<BaseView*>(cocoa_view_.superview);
      gfx::Rect rect2 = [superview flipNSRectToRect:cocoa_view_.frame];
-@@ -189,14 +217,16 @@ void Issue779TraceAnnounce() {
+@@ -189,14 +217,16 @@ void RenderWidgetHostNSViewBridge::SetBounds(const gfx::Rect& rect) {
  
  void RenderWidgetHostNSViewBridge::SetCALayerParams(
      const gfx::CALayerParams& ca_layer_params) {
@@ -1110,7 +1110,7 @@ index f1b928a61f575..7b10301283459 100644
    ScopedCAActionDisabler disabler;
    background_layer_.backgroundColor =
        skia::CGColorCreateFromSkColor(color).get();
-@@ -235,8 +265,9 @@ void Issue779TraceAnnounce() {
+@@ -235,8 +265,9 @@ void RenderWidgetHostNSViewBridge::SetTooltipText(
    // string, as then the comparison above will always fail and we'll try to
    // set it again every single time the mouse moves.
    std::u16string display_text = tooltip_text_;
@@ -1121,7 +1121,7 @@ index f1b928a61f575..7b10301283459 100644
  
    NSString* tooltip_nsstring = base::SysUTF16ToNSString(display_text);
    [cocoa_view_ setToolTipAtMousePoint:tooltip_nsstring];
-@@ -332,8 +363,9 @@ void Issue779TraceAnnounce() {
+@@ -332,8 +363,9 @@ void RenderWidgetHostNSViewBridge::LockKeyboard(
    std::optional<base::flat_set<ui::DomCode>> dom_codes;
    if (uint_dom_codes) {
      dom_codes.emplace();
@@ -1132,7 +1132,7 @@ index f1b928a61f575..7b10301283459 100644
    }
    [cocoa_view_ lockKeyboard:std::move(dom_codes)];
  }
-@@ -393,8 +425,9 @@ void Issue779TraceAnnounce() {
+@@ -393,8 +425,9 @@ void RenderWidgetHostNSViewBridge::OnSharingServiceInvoked(
  }
  
  void RenderWidgetHostNSViewBridge::Destroy() {
@@ -1143,7 +1143,7 @@ index f1b928a61f575..7b10301283459 100644
  }
  
  void RenderWidgetHostNSViewBridge::GestureScrollEventAck(
-@@ -465,25 +498,49 @@ void Hide() override {
+@@ -465,25 +498,49 @@ void RenderWidgetHostNSViewBridge::DisplayPopupMenu(
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
      NSRect flipped_bounds = [cocoa_view_ flipRectToNSRect:menu->bounds];
@@ -1213,10 +1213,10 @@ index f1b928a61f575..7b10301283459 100644
    if (ns_window && ns_window.isHeadless) {
      std::move(callback).Run(std::nullopt);
 diff --git a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-index 9577c1f649a93..c9739250395a5 100644
+index 9577c1f649..c973925039 100644
 --- a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
 +++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-@@ -41,6 +41,148 @@ void Issue779TraceAnnounce() {
+@@ -41,6 +41,148 @@ std::string Issue779NSRectToString(NSRect rect) {
    return base::SysNSStringToUTF8(NSStringFromRect(rect));
  }
  
@@ -1365,7 +1365,7 @@ index 9577c1f649a93..c9739250395a5 100644
  }  // namespace
  
  @interface MenuWasRunCallbackHolder : NSObject
-@@ -164,28 +306,59 @@ - (void)runMenuInView:(NSView*)view
+@@ -164,28 +306,59 @@ std::string Issue779NSRectToString(NSRect rect) {
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
      NSRect windowBounds = [view convertRect:bounds toView:nil];
@@ -1432,7 +1432,7 @@ index 9577c1f649a93..c9739250395a5 100644
    // In a testing situation, make the callback and early-exit.
    MenuWasRunCallbackHolder* holder =
        objc_getAssociatedObject(view, &kMenuWasRunCallbackKey);
-@@ -261,29 +434,110 @@ - (void)runMenuInView:(NSView*)view
+@@ -261,29 +434,110 @@ std::string Issue779NSRectToString(NSRect rect) {
          fakeControlView.window
              ? [fakeControlView.window convertRectToScreen:fakeWindowBounds]
              : NSZeroRect;
@@ -1557,10 +1557,10 @@ index 9577c1f649a93..c9739250395a5 100644
  
    // Starting with macOS 14, menus were reimplemented with Cocoa (rather than
 diff --git a/content/browser/renderer_host/popup_menu_helper_mac.mm b/content/browser/renderer_host/popup_menu_helper_mac.mm
-index 575646a4534f4..db20397886c1e 100644
+index 575646a453..db20397886 100644
 --- a/content/browser/renderer_host/popup_menu_helper_mac.mm
 +++ b/content/browser/renderer_host/popup_menu_helper_mac.mm
-@@ -58,6 +58,25 @@ void Issue779TraceAnnounce() {
+@@ -58,6 +58,25 @@ PopupMenuHelper::PopupMenuHelper(
  }
  
  PopupMenuHelper::~PopupMenuHelper() {
@@ -1586,7 +1586,7 @@ index 575646a4534f4..db20397886c1e 100644
    Hide();
  }
  
-@@ -70,11 +89,34 @@ void Issue779TraceAnnounce() {
+@@ -70,11 +89,34 @@ void PopupMenuHelper::ShowPopupMenu(
      bool allow_multiple_selection) {
    // Only single selection list boxes show a popup on Mac.
    DCHECK(!allow_multiple_selection);
@@ -1622,7 +1622,7 @@ index 575646a4534f4..db20397886c1e 100644
  
    // Convert element_bounds to be in screen.
    gfx::Rect client_area = web_contents->GetContainerBounds();
-@@ -83,6 +125,7 @@ void Issue779TraceAnnounce() {
+@@ -83,6 +125,7 @@ void PopupMenuHelper::ShowPopupMenu(
      Issue779TraceAnnounce();
      LOG(INFO) << "[issue-779-trace] PopupMenuHelper::ShowPopupMenu"
                << " webcontents=" << static_cast<void*>(web_contents)
@@ -1630,7 +1630,7 @@ index 575646a4534f4..db20397886c1e 100644
                << " rwhvm=" << static_cast<void*>(rwhvm)
                << " input_bounds=" << bounds.ToString()
                << " container_bounds=" << client_area.ToString()
-@@ -103,12 +146,36 @@ void Issue779TraceAnnounce() {
+@@ -103,12 +146,36 @@ void PopupMenuHelper::ShowPopupMenu(
            ->GetExclusionAreaBoundsInScreen(web_contents);
    if (permission_exclusion_area_bounds &&
        permission_exclusion_area_bounds->Intersects(bounds_in_screen)) {
@@ -1667,7 +1667,7 @@ index 575646a4534f4..db20397886c1e 100644
    rwhvm->GetNSView()->DisplayPopupMenu(
        remote_cocoa::mojom::PopupMenu::New(
            std::move(items), bounds, item_font_size, right_aligned,
-@@ -118,11 +185,33 @@ void Issue779TraceAnnounce() {
+@@ -118,11 +185,33 @@ void PopupMenuHelper::ShowPopupMenu(
  }
  
  void PopupMenuHelper::Hide() {
@@ -1701,7 +1701,7 @@ index 575646a4534f4..db20397886c1e 100644
  }
  
  RenderWidgetHostViewMac* PopupMenuHelper::GetRenderWidgetHostView() const {
-@@ -133,8 +222,9 @@ void Issue779TraceAnnounce() {
+@@ -133,8 +222,9 @@ RenderWidgetHostViewMac* PopupMenuHelper::GetRenderWidgetHostView() const {
  void PopupMenuHelper::RenderWidgetHostVisibilityChanged(
      RenderWidgetHost* widget_host,
      bool became_visible) {
@@ -1712,7 +1712,7 @@ index 575646a4534f4..db20397886c1e 100644
  }
  
  void PopupMenuHelper::RenderWidgetHostDestroyed(RenderWidgetHost* widget_host) {
-@@ -143,6 +233,17 @@ void Issue779TraceAnnounce() {
+@@ -143,6 +233,17 @@ void PopupMenuHelper::RenderWidgetHostDestroyed(RenderWidgetHost* widget_host) {
  }
  
  void PopupMenuHelper::PopupMenuClosed(std::optional<uint32_t> selected_item) {
@@ -1730,7 +1730,7 @@ index 575646a4534f4..db20397886c1e 100644
    // The RenderFrameHost may be deleted while running the menu, or it may have
    // requested the close. Don't notify in these cases.
    if (popup_client_ && !popup_was_hidden_) {
-@@ -154,6 +255,20 @@ void Issue779TraceAnnounce() {
+@@ -154,6 +255,20 @@ void PopupMenuHelper::PopupMenuClosed(std::optional<uint32_t> selected_item) {
      }
    }
  
@@ -1752,7 +1752,7 @@ index 575646a4534f4..db20397886c1e 100644
  }
  
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index de7bb386094f1..2aad0dfc45a73 100644
+index de7bb38609..2aad0dfc45 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -5,8 +5,9 @@
@@ -1921,7 +1921,7 @@ index de7bb386094f1..2aad0dfc45a73 100644
    // we are sure this isn't hit.
    DCHECK(!IsInBackForwardCache());  // A page in the BackForwardCache is fully
 diff --git a/content/browser/renderer_host/render_widget_host_view_base.cc b/content/browser/renderer_host/render_widget_host_view_base.cc
-index eba3d431d9e94..58381d41ca628 100644
+index eba3d431d9..58381d41ca 100644
 --- a/content/browser/renderer_host/render_widget_host_view_base.cc
 +++ b/content/browser/renderer_host/render_widget_host_view_base.cc
 @@ -4,6 +4,7 @@
@@ -2010,7 +2010,7 @@ index eba3d431d9e94..58381d41ca628 100644
    // Ensure the event is not routed to a prerendered page.
    if (host()->frame_tree() && host()->frame_tree()->is_prerendering()) {
 diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
-index a32ca95b86eba..006a04c297173 100644
+index a32ca95b86..006a04c297 100644
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
 @@ -6,6 +6,7 @@
@@ -2032,7 +2032,7 @@ index a32ca95b86eba..006a04c297173 100644
  using blink::WebTouchEvent;
  
  namespace content {
-@@ -117,7 +118,8 @@
+@@ -117,7 +118,8 @@ enum class GetCachedFirstRectResult {
  // LINT.ThenChange(//tools/metrics/histograms/metadata/input/enums.xml:GetCachedFirstRectResult)
  
  bool Issue779TraceEnabled() {
@@ -2215,7 +2215,7 @@ index a32ca95b86eba..006a04c297173 100644
  }  // namespace
  
  ////////////////////////////////////////////////////////////////////////////////
-@@ -226,8 +378,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -226,8 +378,9 @@ void RenderWidgetHostViewMac::AcceleratedWidgetCALayerParamsUpdated() {
        browser_compositor_->GetLastCALayerParams();
    if (ca_layer_params) {
      ns_view_->SetCALayerParams(*ca_layer_params);
@@ -2226,7 +2226,7 @@ index a32ca95b86eba..006a04c297173 100644
    }
  }
  
-@@ -349,8 +502,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -349,8 +502,9 @@ void RenderWidgetHostViewMac::MigrateNSViewBridge(
    // destroying the associated bridge), and close the receiver (to allow it
    // to be re-bound). Note that |in_process_ns_view_bridge_| remains valid.
    remote_ns_view_client_receiver_.reset();
@@ -2237,7 +2237,7 @@ index a32ca95b86eba..006a04c297173 100644
    remote_ns_view_.reset();
  
    // Enable accessibility focus overriding for remote NSViews.
-@@ -419,8 +573,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -419,8 +573,9 @@ void RenderWidgetHostViewMac::MigrateNSViewBridge(
  
    // Popup windows will specify an invalid |parent_ns_view_id|, because popups
    // have their own NSWindows (of which they are the content NSView).
@@ -2248,7 +2248,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::SetParentUiLayer(ui::Layer* parent_ui_layer) {
-@@ -436,8 +591,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -436,8 +591,9 @@ void RenderWidgetHostViewMac::SetParentUiLayer(ui::Layer* parent_ui_layer) {
      // https://crbug.com/1222976#c49.
      ns_view_->DisableDisplay();
    }
@@ -2259,7 +2259,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::SetParentAccessibilityElement(
-@@ -447,8 +603,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -447,8 +603,9 @@ void RenderWidgetHostViewMac::SetParentAccessibilityElement(
  }
  
  RenderWidgetHostViewCocoa* RenderWidgetHostViewMac::GetInProcessNSView() const {
@@ -2270,7 +2270,7 @@ index a32ca95b86eba..006a04c297173 100644
    return nullptr;
  }
  
-@@ -458,8 +615,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -458,8 +615,9 @@ void RenderWidgetHostViewMac::SetDelegate(
  }
  
  ui::TextInputType RenderWidgetHostViewMac::GetTextInputType() {
@@ -2281,7 +2281,7 @@ index a32ca95b86eba..006a04c297173 100644
    return text_input_manager_->GetTextInputState()->type;
  }
  
-@@ -493,8 +651,40 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -493,8 +651,40 @@ void RenderWidgetHostViewMac::InitAsPopup(
      const gfx::Rect& anchor_rect) {
    DCHECK_EQ(widget_type_, WidgetType::kPopup);
  
@@ -2323,7 +2323,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    RenderWidgetHostViewMac* old_child =
        popup_parent_host_view_->popup_child_host_view_;
-@@ -517,6 +707,23 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -517,6 +707,23 @@ void RenderWidgetHostViewMac::InitAsPopup(
  
    // This path is used by the time/date picker.
    ns_view_->InitAsPopup(pos, popup_parent_host_view_->ns_view_id_);
@@ -2347,7 +2347,7 @@ index a32ca95b86eba..006a04c297173 100644
    Show();
  }
  
-@@ -529,8 +736,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -529,8 +736,9 @@ RenderWidgetHostViewMac::GetFocusedViewForTextSelection() {
  
  RenderWidgetHostDelegate*
  RenderWidgetHostViewMac::GetFocusedRenderWidgetHostDelegate() {
@@ -2358,7 +2358,7 @@ index a32ca95b86eba..006a04c297173 100644
    return host()->delegate();
  }
  
-@@ -541,8 +749,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -541,8 +749,9 @@ RenderWidgetHostImpl* RenderWidgetHostViewMac::GetWidgetForKeyboardEvent() {
  }
  
  RenderWidgetHostImpl* RenderWidgetHostViewMac::GetWidgetForIme() {
@@ -2369,7 +2369,7 @@ index a32ca95b86eba..006a04c297173 100644
    return GetActiveWidget();
  }
  
-@@ -659,17 +868,15 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -659,17 +868,15 @@ void RenderWidgetHostViewMac::SetSize(const gfx::Size& size) {
  }
  
  void RenderWidgetHostViewMac::SetBounds(const gfx::Rect& rect) {
@@ -2395,7 +2395,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // Check if running with no associated NSWindow and force bounds change
    // propagation. This occurs while running headless and causes problems with
-@@ -690,8 +897,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -690,8 +897,9 @@ gfx::NativeViewAccessible RenderWidgetHostViewMac::GetNativeViewAccessible() {
  void RenderWidgetHostViewMac::Focus() {
    // Ignore redundant calls, as they can cause unending loops of focus-setting.
    // crbug.com/998123, crbug.com/804184.
@@ -2406,7 +2406,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    base::AutoReset<bool> is_getting_focus_bit(&is_getting_focus_, true);
    ns_view_->MakeFirstResponder();
-@@ -788,15 +996,17 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -788,15 +996,17 @@ void RenderWidgetHostViewMac::OnUpdateTextInputStateCalled(
      TextInputManager* text_input_manager,
      RenderWidgetHostViewBase* updated_view,
      bool did_update_state) {
@@ -2427,7 +2427,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // |updated_view| is the last view to change its TextInputState which can be
    // used to start/stop monitoring composition info when it has a focused
-@@ -807,8 +1017,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -807,8 +1017,9 @@ void RenderWidgetHostViewMac::OnUpdateTextInputStateCalled(
    // We might end up here when |updated_view| has had active TextInputState and
    // then got destroyed. In that case, |updated_view->GetRenderWidgetHost()|
    // returns nullptr.
@@ -2438,7 +2438,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // Set the monitor state based on the text input focus state.
    const bool has_focus = HasFocus();
-@@ -845,8 +1056,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -845,8 +1056,9 @@ void RenderWidgetHostViewMac::OnImeCompositionRangeChanged(
      bool character_bounds_changed) {
    const TextInputManager::CompositionRangeInfo* info =
        GetCompositionRangeInfo();
@@ -2449,7 +2449,7 @@ index a32ca95b86eba..006a04c297173 100644
    // The RangeChanged message is only sent with valid values. The current
    // caret position (start == end) will be sent if there is no IME range.
    ns_view_->SetCompositionRangeInfo(info->range);
-@@ -859,17 +1071,20 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -859,17 +1071,20 @@ void RenderWidgetHostViewMac::OnSelectionBoundsChanged(
  
    // The rest of the code is to support the Mac Zoom feature tracking the
    // text caret; we can skip it if that feature is not currently enabled.
@@ -2473,7 +2473,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // Create a rectangle for the edge of the selection focus, which will be
    // the same as the caret position if the selection is collapsed. That's
-@@ -891,8 +1106,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -891,8 +1106,9 @@ void RenderWidgetHostViewMac::OnTextSelectionChanged(
    DCHECK_EQ(GetTextInputManager(), text_input_manager);
  
    const TextInputManager::TextSelection* selection = GetTextSelection();
@@ -2484,7 +2484,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    ns_view_->SetTextSelection(selection->text(), selection->offset(),
                               selection->range());
-@@ -943,8 +1159,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -943,8 +1159,9 @@ void RenderWidgetHostViewMac::Destroy() {
    ns_view_ = nullptr;
    in_process_ns_view_bridge_.reset();
    remote_ns_view_client_receiver_.reset();
@@ -2495,7 +2495,7 @@ index a32ca95b86eba..006a04c297173 100644
    remote_ns_view_.reset();
  
    // Delete the delegated frame state, which will reach back into
-@@ -955,8 +1172,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -955,8 +1172,9 @@ void RenderWidgetHostViewMac::Destroy() {
    // we release host().
    NotifyObserversAboutShutdown();
  
@@ -2506,7 +2506,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    mouse_wheel_phase_handler_.IgnorePendingWheelEndEvent();
  
-@@ -968,8 +1186,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -968,8 +1186,9 @@ void RenderWidgetHostViewMac::Destroy() {
  
  void RenderWidgetHostViewMac::UpdateTooltipUnderCursor(
      const std::u16string& tooltip_text) {
@@ -2517,7 +2517,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::UpdateTooltip(
-@@ -1023,8 +1242,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -1023,8 +1242,9 @@ void RenderWidgetHostViewMac::UpdateScreenInfo() {
    // and for web platform APIs that expose screen and window info and events.
    // RenderWidgetHostImpl will query BrowserCompositorMac for the dimensions
    // to send to the renderer, so BrowserCompositorMac must be updated first.
@@ -2528,7 +2528,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  viz::ScopedSurfaceIdAllocator
-@@ -1198,8 +1418,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1198,8 +1418,9 @@ void RenderWidgetHostViewMac::TakeFallbackContentFrom(
    // in the NSView for |view_mac|.
    const gfx::CALayerParams* ca_layer_params =
        view_mac->browser_compositor_->GetLastCALayerParams();
@@ -2539,7 +2539,7 @@ index a32ca95b86eba..006a04c297173 100644
    browser_compositor_->TakeFallbackContentFrom(
        view_mac->browser_compositor_.get());
  }
-@@ -1217,8 +1438,10 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1217,8 +1438,10 @@ bool RenderWidgetHostViewMac::GetLineBreakIndex(
      const gfx::Range& range,
      size_t* line_break_point) {
    DCHECK(line_break_point);
@@ -2551,7 +2551,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // We can't check line breaking completely from only rectangle array. Thus we
    // assume the line breaking as the next character's y offset is larger than
-@@ -1253,8 +1476,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1253,8 +1476,9 @@ gfx::Rect RenderWidgetHostViewMac::GetFirstRectForCompositionRange(
  
    const TextInputManager::CompositionRangeInfo* composition_info =
        GetCompositionRangeInfo();
@@ -2562,7 +2562,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    DCHECK(actual_range);
    DCHECK(!composition_info->character_bounds.empty());
-@@ -1292,17 +1516,21 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1292,17 +1516,21 @@ gfx::Range RenderWidgetHostViewMac::ConvertCharacterRangeToCompositionRange(
      const gfx::Range& request_range) {
    const TextInputManager::CompositionRangeInfo* composition_info =
        GetCompositionRangeInfo();
@@ -2588,7 +2588,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // Heuristic: truncate the request range within the composition range.
    uint32_t truncated_request_start =
-@@ -1347,8 +1575,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1347,8 +1575,9 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
    if (selection->range().is_empty() &&
        requested_range.start() == selection->range().end()) {
      DCHECK(GetFocusedWidget());
@@ -2599,7 +2599,7 @@ index a32ca95b86eba..006a04c297173 100644
  
      // Check selection bounds first (currently populated only for EditContext)
      const std::optional<gfx::Rect> text_selection_bound =
-@@ -1356,8 +1585,7 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1356,8 +1585,7 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
      if (text_selection_bound) {
        *rect = text_selection_bound.value();
        TRACE_EVENT1(
@@ -2609,7 +2609,7 @@ index a32ca95b86eba..006a04c297173 100644
            "GetTextSelectionBounds", rect->ToString());
        return log_result(GetCachedFirstRectResult::kFound);
      }
-@@ -1366,9 +1594,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1366,9 +1594,9 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
      *rect = GetTextInputManager()
                  ->GetSelectionRegion(GetFocusedWidget()->GetView())
                  ->caret_rect;
@@ -2622,7 +2622,7 @@ index a32ca95b86eba..006a04c297173 100644
      return log_result(GetCachedFirstRectResult::kFound);
    }
  
-@@ -1379,14 +1607,15 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1379,14 +1607,15 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
        return log_result(GetCachedFirstRectResult::kNotBoundedBySelection);
      }
      DCHECK(GetFocusedWidget());
@@ -2642,7 +2642,7 @@ index a32ca95b86eba..006a04c297173 100644
      return log_result(GetCachedFirstRectResult::kFound);
    }
  
-@@ -1498,8 +1727,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1498,8 +1727,9 @@ void RenderWidgetHostViewMac::UnlockPointer() {
    ns_view_->SetCursorLocked(false);
    ns_view_->SetCursorLockedUnacceleratedMovement(false);
  
@@ -2653,7 +2653,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  bool RenderWidgetHostViewMac::GetIsPointerLockedUnadjustedMovementForTesting() {
-@@ -1519,8 +1749,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1519,8 +1749,9 @@ bool RenderWidgetHostViewMac::LockKeyboard(
    std::optional<std::vector<uint32_t>> uint_dom_codes;
    if (dom_codes) {
      uint_dom_codes.emplace();
@@ -2664,7 +2664,7 @@ index a32ca95b86eba..006a04c297173 100644
    }
    is_keyboard_locked_ = true;
    ns_view_->LockKeyboard(uint_dom_codes);
-@@ -1528,8 +1759,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1528,8 +1759,9 @@ bool RenderWidgetHostViewMac::LockKeyboard(
  }
  
  void RenderWidgetHostViewMac::UnlockKeyboard() {
@@ -2675,7 +2675,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    is_keyboard_locked_ = false;
    ns_view_->UnlockKeyboard();
-@@ -1628,8 +1860,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1628,8 +1860,9 @@ bool RenderWidgetHostViewMac::ShouldRouteEvents() const {
    // Event routing requires a valid frame sink (that is, that we be connected to
    // a ui::Compositor), which is not guaranteed to be the case.
    // https://crbug.com/844095
@@ -2686,7 +2686,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    return host()->delegate() && host()->delegate()->GetInputEventRouter();
  }
-@@ -1650,8 +1883,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1650,8 +1883,9 @@ void RenderWidgetHostViewMac::InjectTouchEvent(
      const ui::LatencyInfo& latency_info) {
    ui::FilteredGestureProvider::TouchHandlingResult result =
        gesture_provider_.OnTouchEvent(MotionEventWeb(event));
@@ -2697,7 +2697,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    if (ShouldRouteEvents()) {
      WebTouchEvent touch_event(event);
-@@ -1687,8 +1921,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1687,8 +1921,9 @@ viz::FrameSinkId RenderWidgetHostViewMac::GetRootFrameSinkId() {
  viz::SurfaceId RenderWidgetHostViewMac::GetCurrentSurfaceId() const {
    // |browser_compositor_| could be null if this method is called during its
    // destruction.
@@ -2708,7 +2708,7 @@ index a32ca95b86eba..006a04c297173 100644
    return browser_compositor_->GetDelegatedFrameHost()->GetCurrentSurfaceId();
  }
  
-@@ -1702,16 +1937,19 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1702,16 +1937,19 @@ void RenderWidgetHostViewMac::SetActive(bool active) {
    if (host()) {
      UpdateActiveState(active);
      if (active) {
@@ -2731,7 +2731,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::ShowDefinitionForSelection() {
-@@ -1745,8 +1983,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1745,8 +1983,9 @@ viz::SurfaceId RenderWidgetHostViewMac::GetFallbackSurfaceIdForTesting() const {
  }
  
  void RenderWidgetHostViewMac::SetBackgroundLayerColor(SkColor color) {
@@ -2742,7 +2742,7 @@ index a32ca95b86eba..006a04c297173 100644
    background_layer_color_ = color;
    ns_view_->SetBackgroundColor(color);
  }
-@@ -1762,10 +2001,11 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1762,10 +2001,11 @@ void RenderWidgetHostViewMac::DisableDisplayFeatureOverrideForEmulation() {
  
  void RenderWidgetHostViewMac::OverrideDisplayFeatureForEmulation(
      const DisplayFeature* display_feature) {
@@ -2756,7 +2756,7 @@ index a32ca95b86eba..006a04c297173 100644
    host()->SynchronizeVisualProperties();
  }
  
-@@ -1858,8 +2098,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1858,8 +2098,9 @@ void RenderWidgetHostViewMac::RequestShutdown() {
  }
  
  void RenderWidgetHostViewMac::OnFirstResponderChanged(bool is_first_responder) {
@@ -2767,7 +2767,7 @@ index a32ca95b86eba..006a04c297173 100644
    is_first_responder_ = is_first_responder;
    accessibility_focus_overrider_.SetViewIsFirstResponder(is_first_responder_);
  
-@@ -1895,22 +2136,23 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1895,22 +2136,23 @@ void RenderWidgetHostViewMac::OnFirstResponderChanged(bool is_first_responder) {
  }
  
  void RenderWidgetHostViewMac::OnWindowIsKeyChanged(bool is_key) {
@@ -2798,7 +2798,7 @@ index a32ca95b86eba..006a04c297173 100644
    bool view_size_changed =
        view_bounds_in_window_dip_.size() != view_bounds_in_window_dip.size();
  
-@@ -1923,38 +2165,36 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1923,38 +2165,36 @@ void RenderWidgetHostViewMac::OnBoundsInWindowChanged(
      view_bounds_in_window_dip_.set_size(view_bounds_in_window_dip.size());
    }
  
@@ -2856,7 +2856,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::OnScreenInfosChanged(
-@@ -2010,6 +2250,8 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2010,6 +2250,8 @@ void RenderWidgetHostViewMac::ForwardKeyboardEventWithCommands(
  void RenderWidgetHostViewMac::RouteOrProcessMouseEvent(
      const blink::WebMouseEvent& const_web_event) {
    blink::WebMouseEvent web_event = const_web_event;
@@ -2865,7 +2865,7 @@ index a32ca95b86eba..006a04c297173 100644
    ui::LatencyInfo latency_info;
    latency_info.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_UI_COMPONENT);
    if (ShouldRouteEvents()) {
-@@ -2025,8 +2267,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2025,8 +2267,9 @@ void RenderWidgetHostViewMac::RouteOrProcessTouchEvent(
    blink::WebTouchEvent web_event = const_web_event;
    ui::FilteredGestureProvider::TouchHandlingResult result =
        gesture_provider_.OnTouchEvent(MotionEventWeb(web_event));
@@ -2876,7 +2876,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    ui::LatencyInfo latency_info;
    latency_info.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_UI_COMPONENT);
-@@ -2061,11 +2304,14 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2061,11 +2304,14 @@ void RenderWidgetHostViewMac::RouteOrProcessWheelEvent(
  
  void RenderWidgetHostViewMac::ForwardMouseEvent(
      const blink::WebMouseEvent& web_event) {
@@ -2893,7 +2893,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::ForwardWheelEvent(
-@@ -2149,13 +2395,15 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2149,13 +2395,15 @@ void RenderWidgetHostViewMac::LookUpDictionaryOverlayFromRange(
      const gfx::Range& range) {
    content::RenderWidgetHostViewBase* focused_view =
        GetFocusedViewForTextSelection();
@@ -2911,7 +2911,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    int32_t target_widget_process_id =
        widget_host->GetProcess()->GetDeprecatedID();
-@@ -2170,8 +2418,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2170,8 +2418,9 @@ void RenderWidgetHostViewMac::LookUpDictionaryOverlayFromRange(
  void RenderWidgetHostViewMac::LookUpDictionaryOverlayAtPoint(
      const gfx::PointF& root_point_in_dips) {
    if (!host() || !host()->delegate() ||
@@ -2922,7 +2922,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    // With zoom-for-dsf, RenderWidgetHost coordinate system is physical points,
    // which means we have to scale the point by device scale factor.
-@@ -2190,12 +2439,14 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2190,12 +2439,14 @@ void RenderWidgetHostViewMac::LookUpDictionaryOverlayAtPoint(
  
    RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
        static_cast<RenderWidgetHostViewBase*>(view)->GetRenderWidgetHost());
@@ -2939,7 +2939,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    int32_t target_widget_process_id =
        widget_host->GetProcess()->GetDeprecatedID();
-@@ -2213,8 +2464,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2213,8 +2464,9 @@ bool RenderWidgetHostViewMac::SyncGetCharacterIndexAtPoint(
    *index = UINT32_MAX;
  
    if (!host() || !host()->delegate() ||
@@ -2950,7 +2950,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    gfx::PointF transformed_point;
    auto* view = host()
-@@ -2228,8 +2480,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2228,8 +2480,9 @@ bool RenderWidgetHostViewMac::SyncGetCharacterIndexAtPoint(
  
    RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
        static_cast<RenderWidgetHostViewBase*>(view)->GetRenderWidgetHost());
@@ -2961,7 +2961,7 @@ index a32ca95b86eba..006a04c297173 100644
  
    *index = TextInputClientMac::GetInstance()->GetCharacterIndexAtPoint(
        widget_host, gfx::ToFlooredPoint(transformed_point));
-@@ -2322,8 +2575,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2322,8 +2575,9 @@ void RenderWidgetHostViewMac::Copy() {
  
  void RenderWidgetHostViewMac::CopyToFindPboard() {
    WebContents* web_contents = GetWebContents();
@@ -2972,7 +2972,7 @@ index a32ca95b86eba..006a04c297173 100644
  }
  
  void RenderWidgetHostViewMac::CenterSelection() {
-@@ -2534,8 +2788,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2534,8 +2788,9 @@ void RenderWidgetHostViewMac::OnGotStringForDictionaryOverlay(
      if (auto* selection = GetTextSelection()) {
        const std::u16string& selected_text = selection->selected_text();
        NSString* ns_selected_text = base::SysUTF16ToNSString(selected_text);
@@ -2983,7 +2983,7 @@ index a32ca95b86eba..006a04c297173 100644
        scoped_refptr<ui::UniquePasteboard> pasteboard = new ui::UniquePasteboard;
        if ([pasteboard->get() writeObjects:@[ ns_selected_text ]]) {
          NSPerformService(@"Look Up in Dictionary", pasteboard->get());
-@@ -2565,8 +2820,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2565,8 +2820,9 @@ void RenderWidgetHostViewMac::OnGotStringForDictionaryOverlay(
  void RenderWidgetHostViewMac::SetTooltipText(
      const std::u16string& tooltip_text) {
    ns_view_->SetTooltipText(tooltip_text);
@@ -2995,7 +2995,7 @@ index a32ca95b86eba..006a04c297173 100644
  
  void RenderWidgetHostViewMac::UpdateWindowsNow() {
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index a65a4f8daebf8..46134bdc1cae3 100644
+index a65a4f8dae..46134bdc1c 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
 @@ -7,7 +7,9 @@
@@ -3250,7 +3250,7 @@ index a65a4f8daebf8..46134bdc1cae3 100644
  
  ui::mojom::VirtualKeyboardMode WebContentsImpl::GetVirtualKeyboardMode() const {
 diff --git a/content/browser/web_contents/web_contents_view_mac.mm b/content/browser/web_contents/web_contents_view_mac.mm
-index 21aaec5d986a2..a6163efb6ee9c 100644
+index 21aaec5d98..a6163efb6e 100644
 --- a/content/browser/web_contents/web_contents_view_mac.mm
 +++ b/content/browser/web_contents/web_contents_view_mac.mm
 @@ -5,10 +5,11 @@
@@ -3416,7 +3416,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  // This helper's sole task is to write out data for a promised file; the caller
  // is responsible for opening the file. It takes the drop data and an open file
  // stream.
-@@ -138,8 +275,9 @@ void SetReadWritePermissionsForFile(base::File& file) {
+@@ -138,8 +275,9 @@ WebContentsViewMac::WebContentsViewMac(
        deferred_close_weak_ptr_factory_(this) {}
  
  WebContentsViewMac::~WebContentsViewMac() {
@@ -3427,7 +3427,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
    DCHECK(!views_host_);
    in_process_ns_view_bridge_.reset();
  }
-@@ -177,7 +315,7 @@ void SetReadWritePermissionsForFile(base::File& file) {
+@@ -177,7 +315,7 @@ gfx::Rect WebContentsViewMac::GetContainerBounds() const {
    NSWindow* window = [view window];
    NSRect bounds;
  
@@ -3436,7 +3436,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
      bounds = [view bounds];
  
      // Convert bounds to window coordinate space.
-@@ -297,37 +435,43 @@ ClipboardEndpoint source_endpoint(
+@@ -297,37 +435,43 @@ void WebContentsViewMac::StartDragging(
  }
  
  void WebContentsViewMac::Focus() {
@@ -3487,7 +3487,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  
    // Fall back to the default focus behavior if we could not restore focus.
    // TODO(shess): If location-bar gets focus by default, this will
-@@ -338,8 +482,9 @@ ClipboardEndpoint source_endpoint(
+@@ -338,8 +482,9 @@ void WebContentsViewMac::RestoreFocus() {
  }
  
  void WebContentsViewMac::FocusThroughTabTraversal(bool reverse) {
@@ -3498,7 +3498,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  
    web_contents_->GetRenderViewHost()->SetInitialFocus(reverse);
  }
-@@ -365,29 +510,34 @@ ClipboardEndpoint source_endpoint(
+@@ -365,29 +510,34 @@ void WebContentsViewMac::LostFocus(RenderWidgetHostImpl* render_widget_host) {
  // This is called when the renderer asks us to take focus back (i.e., it has
  // iterated past the last focusable element on the page).
  void WebContentsViewMac::TakeFocus(bool reverse) {
@@ -3539,7 +3539,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  }
  
  #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
-@@ -402,11 +552,44 @@ ClipboardEndpoint source_endpoint(
+@@ -402,11 +552,44 @@ void WebContentsViewMac::ShowPopupMenu(
      bool allow_multiple_selection) {
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
@@ -3586,7 +3586,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
                << " item_count=" << menu_items.size()
                << " selected_item=" << selected_item
                << " right_aligned=" << right_aligned
-@@ -414,6 +597,16 @@ ClipboardEndpoint source_endpoint(
+@@ -414,6 +597,16 @@ void WebContentsViewMac::ShowPopupMenu(
    }
    popup_menu_helper_ = std::make_unique<PopupMenuHelper>(
        this, render_frame_host, std::move(popup_client));
@@ -3603,7 +3603,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
    popup_menu_helper_->ShowPopupMenu(bounds, item_font_size, selected_item,
                                      std::move(menu_items), right_aligned,
                                      allow_multiple_selection);
-@@ -422,7 +615,47 @@ ClipboardEndpoint source_endpoint(
+@@ -422,7 +615,47 @@ void WebContentsViewMac::ShowPopupMenu(
  #endif
  
  void WebContentsViewMac::OnMenuClosed() {
@@ -3651,7 +3651,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  }
  
  gfx::Rect WebContentsViewMac::GetViewBounds() const {
-@@ -456,8 +689,9 @@ ClipboardEndpoint source_endpoint(
+@@ -456,8 +689,9 @@ void WebContentsViewMac::CreateView(gfx::NativeView context) {
                                                                this);
  
    drag_dest_ = [[WebDragDest alloc] initWithWebContentsImpl:web_contents_];
@@ -3662,7 +3662,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  }
  
  RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
-@@ -538,8 +772,7 @@ ClipboardEndpoint source_endpoint(
+@@ -538,8 +772,7 @@ void WebContentsViewMac::RenderViewReady() {}
  void WebContentsViewMac::RenderViewHostChanged(RenderViewHost* old_host,
                                                 RenderViewHost* new_host) {}
  
@@ -3672,7 +3672,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  
  // Arrange to call CloseTab() after we're back to the main event loop.
  // The obvious way to do this would be to post a NonNestable task, but that
-@@ -553,8 +786,9 @@ ClipboardEndpoint source_endpoint(
+@@ -553,8 +786,9 @@ bool WebContentsViewMac::CloseTabAfterEventTrackingIfNeeded() {
    deferred_close_weak_ptr_factory_.InvalidateWeakPtrs();
    auto weak_ptr = deferred_close_weak_ptr_factory_.GetWeakPtr();
    CFRunLoopPerformBlock(CFRunLoopGetCurrent(), kCFRunLoopDefaultMode, ^{
@@ -3683,7 +3683,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
    });
    return true;
  }
-@@ -589,10 +823,12 @@ ClipboardEndpoint source_endpoint(
+@@ -589,10 +823,12 @@ void WebContentsViewMac::OnMouseEvent(std::unique_ptr<ui::Event> event) {
  }
  
  void WebContentsViewMac::OnBecameFirstResponder(SelectionDirection direction) {
@@ -3698,7 +3698,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  
    web_contents_->FocusThroughTabTraversal(direction ==
                                            SelectionDirection::kReverse);
-@@ -600,8 +836,9 @@ ClipboardEndpoint source_endpoint(
+@@ -600,8 +836,9 @@ void WebContentsViewMac::OnBecameFirstResponder(SelectionDirection direction) {
  
  void WebContentsViewMac::OnWindowVisibilityChanged(
      remote_cocoa::mojom::Visibility mojo_visibility) {
@@ -3709,7 +3709,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  
    // TODO: make content use the mojo type for visibility.
    Visibility visibility = Visibility::VISIBLE;
-@@ -858,31 +1095,35 @@ ClipboardEndpoint source_endpoint(
+@@ -858,31 +1095,35 @@ void WebContentsViewMac::ViewsHostableSetBounds(
      int superview_height) {
    // Update both the in-process and out-of-process NSViews' bounds.
    in_process_ns_view_bridge_->SetBounds(bounds_in_superview, superview_height);
@@ -3751,7 +3751,7 @@ index 21aaec5d986a2..a6163efb6ee9c 100644
  
  gfx::NativeViewAccessible
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.cc b/content/libtermsurf_chromium/libtermsurf_chromium.cc
-index a5167e40812b2..6463fb7685759 100644
+index a5167e4081..6463fb7685 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.cc
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 @@ -4,7 +4,10 @@
@@ -3826,7 +3826,7 @@ index a5167e40812b2..6463fb7685759 100644
    g_main_parts->ForwardMouseMove(wc, x, y, modifiers);
  }
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 40bf5d180c243..74672f6a98732 100644
+index 40bf5d180c..74672f6a98 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -510,15 +510,44 @@ void TsBrowserMainParts::ForwardMouseEvent(void* wc_handle, int type,
@@ -3963,7 +3963,7 @@ index 40bf5d180c243..74672f6a98732 100644
  }
  
 diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
-index 9c968fb2e7bf7..66b87f473e662 100644
+index 9c968fb2e7..66b87f473e 100644
 --- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 @@ -29,9 +29,11 @@
@@ -4528,7 +4528,7 @@ index 9c968fb2e7bf7..66b87f473e662 100644
                      (screen_rect.x() - opener_widget_screen_origin_.x()) *
                          opener_emulator_scale_);
 diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
-index b5a7e1b177f03..c699ab65584fb 100644
+index b5a7e1b177..c699ab6558 100644
 --- a/third_party/blink/renderer/core/exported/web_view_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
 @@ -30,11 +30,13 @@
@@ -4701,7 +4701,7 @@ index b5a7e1b177f03..c699ab65584fb 100644
  
  void WebViewImpl::UpdatePagePopup() {
 diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc
-index b6de81c123246..add937710629a 100644
+index b6de81c123..add9377106 100644
 --- a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc
 +++ b/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc
 @@ -30,6 +30,7 @@
@@ -4907,7 +4907,7 @@ index b6de81c123246..add937710629a 100644
                                                LocalRootImpl()->GetFrame());
  }
 diff --git a/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc b/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
-index 4ea741831cfba..077986280b149 100644
+index 4ea741831c..077986280b 100644
 --- a/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
 +++ b/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
 @@ -30,6 +30,9 @@
@@ -5072,7 +5072,7 @@ index 4ea741831cfba..077986280b149 100644
    client_->DidEndChooser();
  }
 diff --git a/third_party/blink/renderer/core/html/forms/external_popup_menu.cc b/third_party/blink/renderer/core/html/forms/external_popup_menu.cc
-index 63acc60db26dc..363683bf17a2e 100644
+index 63acc60db2..363683bf17 100644
 --- a/third_party/blink/renderer/core/html/forms/external_popup_menu.cc
 +++ b/third_party/blink/renderer/core/html/forms/external_popup_menu.cc
 @@ -30,6 +30,9 @@
@@ -5289,7 +5289,7 @@ index 63acc60db26dc..363683bf17a2e 100644
      owner_element_->PopupDidHide();
    Reset();
 diff --git a/third_party/blink/renderer/core/html/forms/html_input_element.cc b/third_party/blink/renderer/core/html/forms/html_input_element.cc
-index b6a14cccb84ff..9d43165ab8c7c 100644
+index b6a14cccb8..9d43165ab8 100644
 --- a/third_party/blink/renderer/core/html/forms/html_input_element.cc
 +++ b/third_party/blink/renderer/core/html/forms/html_input_element.cc
 @@ -30,7 +30,10 @@
@@ -5485,7 +5485,7 @@ index b6a14cccb84ff..9d43165ab8c7c 100644
  
  ShadowRoot* HTMLInputElement::EnsureShadowSubtree() {
 diff --git a/third_party/blink/renderer/core/html/forms/html_select_element.cc b/third_party/blink/renderer/core/html/forms/html_select_element.cc
-index e023e4d12e86d..b9fbb6b222520 100644
+index e023e4d12e..b9fbb6b222 100644
 --- a/third_party/blink/renderer/core/html/forms/html_select_element.cc
 +++ b/third_party/blink/renderer/core/html/forms/html_select_element.cc
 @@ -29,6 +29,9 @@
@@ -5638,7 +5638,7 @@ index e023e4d12e86d..b9fbb6b222520 100644
  
  void HTMLSelectElement::ChildrenChanged(const ChildrenChange& change) {
 diff --git a/third_party/blink/renderer/core/html/forms/select_type.cc b/third_party/blink/renderer/core/html/forms/select_type.cc
-index 1d6ea13be5a08..6d5d15164731e 100644
+index 1d6ea13be5..6d5d151647 100644
 --- a/third_party/blink/renderer/core/html/forms/select_type.cc
 +++ b/third_party/blink/renderer/core/html/forms/select_type.cc
 @@ -29,6 +29,9 @@
@@ -6162,7 +6162,7 @@ index 1d6ea13be5a08..6d5d15164731e 100644
    select_->PseudoStateChanged(CSSSelector::kPseudoOpen);
    if (auto* layout_object = select_->GetLayoutObject()) {
 diff --git a/third_party/blink/renderer/core/input/event_handler.cc b/third_party/blink/renderer/core/input/event_handler.cc
-index bb8bfebda52f4..df17359c802a4 100644
+index bb8bfebda5..df17359c80 100644
 --- a/third_party/blink/renderer/core/input/event_handler.cc
 +++ b/third_party/blink/renderer/core/input/event_handler.cc
 @@ -28,12 +28,15 @@
@@ -6661,7 +6661,7 @@ index bb8bfebda52f4..df17359c802a4 100644
  }
  
 diff --git a/third_party/blink/renderer/core/input/mouse_event_manager.cc b/third_party/blink/renderer/core/input/mouse_event_manager.cc
-index 48021f3c2beff..44047ea4523f6 100644
+index 48021f3c2b..44047ea452 100644
 --- a/third_party/blink/renderer/core/input/mouse_event_manager.cc
 +++ b/third_party/blink/renderer/core/input/mouse_event_manager.cc
 @@ -4,6 +4,10 @@
@@ -6952,7 +6952,7 @@ index 48021f3c2beff..44047ea4523f6 100644
  
  void MouseEventManager::RecomputeMouseHoverStateIfNeeded() {
 diff --git a/third_party/blink/renderer/core/page/chrome_client_impl.cc b/third_party/blink/renderer/core/page/chrome_client_impl.cc
-index 3bb744b92cc2a..2d43daab3144f 100644
+index 3bb744b92c..2d43daab31 100644
 --- a/third_party/blink/renderer/core/page/chrome_client_impl.cc
 +++ b/third_party/blink/renderer/core/page/chrome_client_impl.cc
 @@ -31,11 +31,13 @@
@@ -7082,5 +7082,5 @@ index 3bb744b92cc2a..2d43daab3144f 100644
  }
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

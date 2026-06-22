@@ -1,7 +1,7 @@
-From 66f3ea484b534303768f21227c36f01925c91c09 Mon Sep 17 00:00:00 2001
+From 62b0216016aac7f65a1da6fbd2505978ff4235cc Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 19:43:29 -0500
-Subject: [PATCH 67/73] Add TermSurf page zoom
+Subject: [PATCH 67/76] Add TermSurf page zoom
 
 A page once sat too small to read,
 Its letters pleading, "help with speed."
@@ -13,7 +13,7 @@ And raw keys no longer stampede.
  1 file changed, 45 insertions(+), 7 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 130c7f4d12fa7..4ad7fa501e16f 100644
+index 130c7f4d12..4ad7fa501e 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -16,6 +16,8 @@
@@ -116,5 +116,5 @@ index 130c7f4d12fa7..4ad7fa501e16f 100644
      NotifyTermSurfInputActivation(web_contents);
    }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

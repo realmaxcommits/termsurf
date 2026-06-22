@@ -1,7 +1,7 @@
-From f9dbeb9e627229b1204a6c60389f949729494116 Mon Sep 17 00:00:00 2001
+From 031963f5e7c3b87df8c533f449580809fba7e7a1 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 16:07:47 -0500
-Subject: [PATCH 62/73] Organize TermSurf PDF support
+Subject: [PATCH 62/76] Organize TermSurf PDF support
 
 The PDF code packed a crowded hall,
 So helpers formed a tidy wall.
@@ -47,7 +47,7 @@ And harnesses shared their little tasks.
  create mode 100644 content/libtermsurf_chromium/ts_pdf_renderer_support.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index d2a80d78a7b2e..d74a785183b15 100644
+index d2a80d78a7..d74a785183 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -31,6 +31,8 @@ shared_library("libtermsurf_chromium") {
@@ -88,7 +88,7 @@ index d2a80d78a7b2e..d74a785183b15 100644
      "//components/strings:components_strings",
      "//components/user_prefs",
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
-index bb9dbcfddda5b..a84f507034aad 100644
+index bb9dbcfddd..a84f507034 100644
 --- a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 @@ -4,19 +4,12 @@
@@ -337,7 +337,7 @@ index bb9dbcfddda5b..a84f507034aad 100644
              << " resource_id=" << (found ? entry->second : 0)
              << " found=" << found;
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc b/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc
-index 2654eb6def4ad..6d740f0a47d15 100644
+index 2654eb6def..6d740f0a47 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc
 @@ -92,7 +92,7 @@ std::string LoadResourceBody(int resource_id,
@@ -359,7 +359,7 @@ index 2654eb6def4ad..6d740f0a47d15 100644
                << " resource_id=" << resource_id_ << " bytes=" << body.size()
                << " mime=" << mime_type << " ok=" << ok;
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
-index fe767224b2b73..880bdae9d839d 100644
+index fe767224b2..880bdae9d8 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
 @@ -50,7 +50,7 @@ void TsExtensionsAPIProvider::AddAPIJSONSources(
@@ -381,7 +381,7 @@ index fe767224b2b73..880bdae9d839d 100644
    }
    return {};
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
-index 34396354b2798..234d1842a307b 100644
+index 34396354b2..234d1842a3 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 @@ -314,7 +314,7 @@ base::FilePath TsExtensionsBrowserClient::GetBundleResourcePath(
@@ -403,7 +403,7 @@ index 34396354b2798..234d1842a307b 100644
              << render_frame_host->GetSiteInstance()->GetSiteURL()
              << " extension_id=" << extension->id() << " populate_called=1";
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
-index 63f9aa99f23a8..fbbde4900c297 100644
+index 63f9aa99f2..fbbde4900c 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 @@ -61,14 +61,14 @@ TsExtensionsClient::TsExtensionsClient() {
@@ -433,7 +433,7 @@ index 63f9aa99f23a8..fbbde4900c297 100644
  }
  
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
-index 3f7b998d83590..d70a9b908f114 100644
+index 3f7b998d83..d70a9b908f 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 @@ -68,10 +68,10 @@ std::string DescribePermissionForLog(const base::Value& permission) {
@@ -538,7 +538,7 @@ index 3f7b998d83590..d70a9b908f114 100644
                     extension_misc::kPdfExtensionId)
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_load_time_data.cc b/content/libtermsurf_chromium/extensions/ts_pdf_load_time_data.cc
 new file mode 100644
-index 0000000000000..68c59f03e4b78
+index 0000000000..68c59f03e4
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_load_time_data.cc
 @@ -0,0 +1,260 @@
@@ -804,7 +804,7 @@ index 0000000000000..68c59f03e4b78
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_load_time_data.h b/content/libtermsurf_chromium/extensions/ts_pdf_load_time_data.h
 new file mode 100644
-index 0000000000000..2a2ba66390678
+index 0000000000..2a2ba66390
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_load_time_data.h
 @@ -0,0 +1,18 @@
@@ -827,7 +827,7 @@ index 0000000000000..2a2ba66390678
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_PDF_LOAD_TIME_DATA_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
-index 28e7e86b8595d..1385544001158 100644
+index 28e7e86b85..1385544001 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 @@ -39,8 +39,8 @@ bool HasHtmlSignature(std::string contents) {
@@ -902,7 +902,7 @@ index 28e7e86b8595d..1385544001158 100644
              << " found=" << extensions_renderer_found
              << " loaded=" << extensions_renderer_loaded
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_viewer_private_api.cc b/content/libtermsurf_chromium/extensions/ts_pdf_viewer_private_api.cc
-index 57b7fdf7ab025..7923d1b85e5b8 100644
+index 57b7fdf7ab..7923d1b85e 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_viewer_private_api.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_viewer_private_api.cc
 @@ -34,13 +34,13 @@ TsPdfViewerPrivateSetPdfDocumentTitleFunction::Run() {
@@ -956,7 +956,7 @@ index 57b7fdf7ab025..7923d1b85e5b8 100644
              << " has_entry=" << (updated_entry ? 1 : 0) << " entry_title="
              << (updated_entry
 diff --git a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
-index e602f34bce1fd..e8f53427ae215 100644
+index e602f34bce..e8f53427ae 100644
 --- a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 @@ -4,19 +4,12 @@
@@ -1213,7 +1213,7 @@ index e602f34bce1fd..e8f53427ae215 100644
  }
  
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 2128a95ace6ff..821d4402e74b3 100644
+index 2128a95ace..821d4402e7 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -5,131 +5,27 @@
@@ -1731,7 +1731,7 @@ index 2128a95ace6ff..821d4402e74b3 100644
  
  void TsBrowserClient::ConfigureNetworkContextParamsForShell(
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index d4669179500ae..d3aab68f92251 100644
+index d466917950..d3aab68f92 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -209,16 +209,16 @@ void TsBrowserMainParts::InitializeMessageLoopContext() {
@@ -1976,7 +1976,7 @@ index d4669179500ae..d3aab68f92251 100644
                << " url=" << web_contents->GetLastCommittedURL().spec()
                << " view=" << view;
 diff --git a/content/libtermsurf_chromium/ts_content_client.cc b/content/libtermsurf_chromium/ts_content_client.cc
-index faf2818dbbd48..e374299b01fd7 100644
+index faf2818dbb..e374299b01 100644
 --- a/content/libtermsurf_chromium/ts_content_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_client.cc
 @@ -53,7 +53,7 @@ void TsContentClient::AddPlugins(std::vector<content::WebPluginInfo>* plugins) {
@@ -1998,7 +1998,7 @@ index faf2818dbbd48..e374299b01fd7 100644
    }
  }
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.cc b/content/libtermsurf_chromium/ts_content_renderer_client.cc
-index a260a9efb4ace..9a45df542b10d 100644
+index a260a9efb4..9a45df542b 100644
 --- a/content/libtermsurf_chromium/ts_content_renderer_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 @@ -4,89 +4,19 @@
@@ -2208,7 +2208,7 @@ index a260a9efb4ace..9a45df542b10d 100644
              << " url=" << GURL(params.url)
              << " delegated_to_extensions=" << delegated_to_extensions;
 diff --git a/content/libtermsurf_chromium/ts_mime_handler_binders.cc b/content/libtermsurf_chromium/ts_mime_handler_binders.cc
-index 617d945906eaf..f0fd85012a363 100644
+index 617d945906..f0fd85012a 100644
 --- a/content/libtermsurf_chromium/ts_mime_handler_binders.cc
 +++ b/content/libtermsurf_chromium/ts_mime_handler_binders.cc
 @@ -50,7 +50,7 @@ class TsBeforeUnloadControl
@@ -2279,7 +2279,7 @@ index 617d945906eaf..f0fd85012a363 100644
        std::make_unique<TsBeforeUnloadControl>(frame_url), std::move(receiver));
 diff --git a/content/libtermsurf_chromium/ts_pdf_browser_support.cc b/content/libtermsurf_chromium/ts_pdf_browser_support.cc
 new file mode 100644
-index 0000000000000..1555ea85be67d
+index 0000000000..1555ea85be
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_browser_support.cc
 @@ -0,0 +1,456 @@
@@ -2741,7 +2741,7 @@ index 0000000000000..1555ea85be67d
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_pdf_browser_support.h b/content/libtermsurf_chromium/ts_pdf_browser_support.h
 new file mode 100644
-index 0000000000000..c8debb948243b
+index 0000000000..c8debb9482
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_browser_support.h
 @@ -0,0 +1,94 @@
@@ -2840,7 +2840,7 @@ index 0000000000000..c8debb948243b
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_BROWSER_SUPPORT_H_
 diff --git a/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc b/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc
-index 48455ea205e49..5a891926b5821 100644
+index 48455ea205..5a891926b5 100644
 --- a/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc
 +++ b/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc
 @@ -14,26 +14,26 @@ TsPDFDocumentHelperClient::~TsPDFDocumentHelperClient() = default;
@@ -2884,7 +2884,7 @@ index 48455ea205e49..5a891926b5821 100644
  }
  #endif
 diff --git a/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc b/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc
-index f5ea3ecf71bfd..d7e3f392918ed 100644
+index f5ea3ecf71..d7e3f39291 100644
 --- a/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc
 +++ b/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc
 @@ -41,7 +41,7 @@ class TsPdfHelpBubbleHandlerFactory
@@ -2912,7 +2912,7 @@ index f5ea3ecf71bfd..d7e3f392918ed 100644
    mojo::MakeSelfOwnedReceiver(
        std::make_unique<TsPdfHelpBubbleHandlerFactory>(frame_url, site_url),
 diff --git a/content/libtermsurf_chromium/ts_pdf_iframe_navigation_throttle.cc b/content/libtermsurf_chromium/ts_pdf_iframe_navigation_throttle.cc
-index bad4fad8c0d17..cd1ae41508dd1 100644
+index bad4fad8c0..cd1ae41508 100644
 --- a/content/libtermsurf_chromium/ts_pdf_iframe_navigation_throttle.cc
 +++ b/content/libtermsurf_chromium/ts_pdf_iframe_navigation_throttle.cc
 @@ -48,7 +48,7 @@ TsPdfIframeNavigationThrottle::WillProcessResponse() {
@@ -2926,7 +2926,7 @@ index bad4fad8c0d17..cd1ae41508dd1 100644
  }
 diff --git a/content/libtermsurf_chromium/ts_pdf_renderer_support.cc b/content/libtermsurf_chromium/ts_pdf_renderer_support.cc
 new file mode 100644
-index 0000000000000..4c76fd06e8ed1
+index 0000000000..4c76fd06e8
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_renderer_support.cc
 @@ -0,0 +1,174 @@
@@ -3106,7 +3106,7 @@ index 0000000000000..4c76fd06e8ed1
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_pdf_renderer_support.h b/content/libtermsurf_chromium/ts_pdf_renderer_support.h
 new file mode 100644
-index 0000000000000..6a3b29f2304f0
+index 0000000000..6a3b29f230
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_renderer_support.h
 @@ -0,0 +1,41 @@
@@ -3152,7 +3152,7 @@ index 0000000000000..6a3b29f2304f0
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_RENDERER_SUPPORT_H_
 diff --git a/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc b/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc
-index 6c73054de1e5a..fccd87a64e64a 100644
+index 6c73054de1..fccd87a64e 100644
 --- a/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc
 +++ b/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc
 @@ -62,7 +62,7 @@ std::optional<GURL> TsPdfStreamDelegate::MapToOriginalUrl(
@@ -3208,7 +3208,7 @@ index 6c73054de1e5a..fccd87a64e64a 100644
              << " has_stream=" << (stream_info.has_value() ? 1 : 0);
    return stream_info;
 diff --git a/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc b/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
-index 8637dda722dea..2966055faf1eb 100644
+index 8637dda722..2966055faf 100644
 --- a/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
 +++ b/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
 @@ -123,20 +123,20 @@ bool AddPdfStreamContainer(
@@ -3309,7 +3309,7 @@ index 8637dda722dea..2966055faf1eb 100644
    delegate_->Resume();
  }
 diff --git a/content/libtermsurf_chromium/ts_plugin_utils.cc b/content/libtermsurf_chromium/ts_plugin_utils.cc
-index 884db3cbd5e81..45c80776052c9 100644
+index 884db3cbd5..45c8077605 100644
 --- a/content/libtermsurf_chromium/ts_plugin_utils.cc
 +++ b/content/libtermsurf_chromium/ts_plugin_utils.cc
 @@ -39,7 +39,7 @@ base::flat_map<std::string, std::string> GetTsPluginMimeTypeToExtensionIdMap(
@@ -3322,7 +3322,7 @@ index 884db3cbd5e81..45c80776052c9 100644
              << (result.contains(pdf::kPDFMimeType)
                      ? result[pdf::kPDFMimeType]
 diff --git a/content/libtermsurf_chromium/ts_tab_observer.cc b/content/libtermsurf_chromium/ts_tab_observer.cc
-index 822c8251ad04b..95d2ce4c5493b 100644
+index 822c8251ad..95d2ce4c54 100644
 --- a/content/libtermsurf_chromium/ts_tab_observer.cc
 +++ b/content/libtermsurf_chromium/ts_tab_observer.cc
 @@ -103,7 +103,7 @@ void TsTabObserver::TitleWasSet(NavigationEntry* entry) {
@@ -3335,7 +3335,7 @@ index 822c8251ad04b..95d2ce4c5493b 100644
  #endif
  }
 diff --git a/pdf/pdf_view_web_plugin.cc b/pdf/pdf_view_web_plugin.cc
-index 92f76975a1638..1bd1512c48bf5 100644
+index 92f76975a1..1bd1512c48 100644
 --- a/pdf/pdf_view_web_plugin.cc
 +++ b/pdf/pdf_view_web_plugin.cc
 @@ -978,7 +978,7 @@ void PdfViewWebPlugin::UpdateGeometry(const gfx::Rect& window_rect,
@@ -3366,7 +3366,7 @@ index 92f76975a1638..1bd1512c48bf5 100644
                << " original_x=" << original_position.x()
                << " original_y=" << original_position.y()
 diff --git a/pdf/pdfium/pdfium_engine.cc b/pdf/pdfium/pdfium_engine.cc
-index b2a90cc2ad0e3..c0303deae5bb5 100644
+index b2a90cc2ad..c0303deae5 100644
 --- a/pdf/pdfium/pdfium_engine.cc
 +++ b/pdf/pdfium/pdfium_engine.cc
 @@ -782,7 +782,7 @@ void PDFiumEngine::PluginSizeUpdated(const gfx::Size& size) {
@@ -3415,5 +3415,5 @@ index b2a90cc2ad0e3..c0303deae5bb5 100644
                << Issue794SelectedTextSample(selected_text) << "\"";
    }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

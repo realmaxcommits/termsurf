@@ -1,7 +1,7 @@
-From 95c078d4fb6f53573cb2155f06d78d10522c702b Mon Sep 17 00:00:00 2001
+From 7f022732665bd6f2559d1503ba75e95f219eacdf Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 15:48:05 -0500
-Subject: [PATCH 43/73] Trace PDF wrapper body bytes
+Subject: [PATCH 43/76] Trace PDF wrapper body bytes
 
 The parser chewed a tiny page,
 Not what the wrapper wrote on stage.
@@ -13,7 +13,7 @@ And points us toward the static blame.
  2 files changed, 265 insertions(+)
 
 diff --git a/third_party/blink/renderer/core/html/parser/html_document_parser.cc b/third_party/blink/renderer/core/html/parser/html_document_parser.cc
-index b05d1e6c1ddda..e7145a6c3fbcf 100644
+index b05d1e6c1d..e7145a6c3f 100644
 --- a/third_party/blink/renderer/core/html/parser/html_document_parser.cc
 +++ b/third_party/blink/renderer/core/html/parser/html_document_parser.cc
 @@ -25,10 +25,13 @@
@@ -160,7 +160,7 @@ index b05d1e6c1ddda..e7145a6c3fbcf 100644
      return;
    }
 diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
-index f35fe840c0555..3743080b8bb32 100644
+index f35fe840c0..3743080b8b 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.cc
 +++ b/third_party/blink/renderer/core/loader/document_loader.cc
 @@ -32,6 +32,7 @@
@@ -423,5 +423,5 @@ index f35fe840c0555..3743080b8bb32 100644
  
      if (!frame_ || !body_loader_) {
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

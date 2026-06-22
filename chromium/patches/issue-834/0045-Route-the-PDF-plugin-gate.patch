@@ -1,7 +1,7 @@
-From 8b03d99ffc4eba5b9a5d9ff16e719970ee2fe624 Mon Sep 17 00:00:00 2001
+From 97f388967d82391c535ab1e21822f55b547c54ad Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 16:49:19 -0500
-Subject: [PATCH 45/73] Route the PDF plugin gate
+Subject: [PATCH 45/76] Route the PDF plugin gate
 
 The plugin knocked, the guard asked why,
 "Are you PDF?" came no reply.
@@ -13,7 +13,7 @@ Until the proper process gate.
  2 files changed, 21 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index cd971fcc7d563..f0038e89596cb 100644
+index cd971fcc7d..f0038e8959 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -84,6 +84,7 @@ shared_library("libtermsurf_chromium") {
@@ -25,7 +25,7 @@ index cd971fcc7d563..f0038e89596cb 100644
      "//components/prefs",
      "//components/resources:components_resources",
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.cc b/content/libtermsurf_chromium/ts_content_renderer_client.cc
-index 005df4d8de1e3..7390b75a7f1c5 100644
+index 005df4d8de..7390b75a7f 100644
 --- a/content/libtermsurf_chromium/ts_content_renderer_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 @@ -7,6 +7,7 @@
@@ -63,5 +63,5 @@ index 005df4d8de1e3..7390b75a7f1c5 100644
        extensions_renderer_client_ &&
        extensions_renderer_client_->OverrideCreatePlugin(render_frame, params);
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

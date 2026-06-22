@@ -1,7 +1,7 @@
-From f6c82ef027b7e85331b5f80ed90962ad526a461c Mon Sep 17 00:00:00 2001
+From 0a25a08dff368ecfe43af38ae72486fc5db8163e Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 11:48:13 -0500
-Subject: [PATCH 31/73] Register PDF viewer binders
+Subject: [PATCH 31/76] Register PDF viewer binders
 
 The viewer rang a Mojo bell,
 We answered softly: all is well.
@@ -22,7 +22,7 @@ Just stubs to learn the next bad fate.
  create mode 100644 content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 05f2646fc4a6b..7bee1fb9a877d 100644
+index 05f2646fc4..7bee1fb9a8 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -43,6 +43,10 @@ shared_library("libtermsurf_chromium") {
@@ -53,7 +53,7 @@ index 05f2646fc4a6b..7bee1fb9a877d 100644
  
    if (is_mac) {
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 2ff19f827194c..0b946a8a992c8 100644
+index 2ff19f8271..0b946a8a99 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -5,7 +5,10 @@
@@ -114,7 +114,7 @@ index 2ff19f827194c..0b946a8a992c8 100644
  
  void TsBrowserClient::OverrideWebPreferences(
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
-index 22b1157cd4ccd..a5c963fd935f9 100644
+index 22b1157cd4..a5c963fd93 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.h
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -35,6 +35,9 @@ class TsBrowserClient : public ShellContentBrowserClient {
@@ -129,7 +129,7 @@ index 22b1157cd4ccd..a5c963fd935f9 100644
                                blink::web_pref::WebPreferences* prefs) override;
 diff --git a/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc b/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc
 new file mode 100644
-index 0000000000000..48455ea205e49
+index 0000000000..48455ea205
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_document_helper_client.cc
 @@ -0,0 +1,49 @@
@@ -184,7 +184,7 @@ index 0000000000000..48455ea205e49
 +}  // namespace pdf
 diff --git a/content/libtermsurf_chromium/ts_pdf_document_helper_client.h b/content/libtermsurf_chromium/ts_pdf_document_helper_client.h
 new file mode 100644
-index 0000000000000..1088fab617d82
+index 0000000000..1088fab617
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_document_helper_client.h
 @@ -0,0 +1,42 @@
@@ -232,7 +232,7 @@ index 0000000000000..1088fab617d82
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_PDF_DOCUMENT_HELPER_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc b/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc
 new file mode 100644
-index 0000000000000..f5ea3ecf71bfd
+index 0000000000..f5ea3ecf71
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.cc
 @@ -0,0 +1,77 @@
@@ -315,7 +315,7 @@ index 0000000000000..f5ea3ecf71bfd
 +}  // namespace pdf
 diff --git a/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.h b/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.h
 new file mode 100644
-index 0000000000000..9d1610c74eb2f
+index 0000000000..9d1610c74e
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_pdf_help_bubble_handler_factory.h
 @@ -0,0 +1,24 @@
@@ -344,5 +344,5 @@ index 0000000000000..9d1610c74eb2f
 +
 +#endif  // CONTENT_LIBTERMSURF_CONTENT_TS_PDF_HELP_BUBBLE_HANDLER_FACTORY_H_
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

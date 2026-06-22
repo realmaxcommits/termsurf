@@ -1,14 +1,14 @@
-From 3764d958e358f53179a0ae8ac95a3b8db2c181a8 Mon Sep 17 00:00:00 2001
+From e6135ddf43e5162d97d25f4e35ff0cac55aad15f Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 08:47:52 -0500
-Subject: [PATCH 50/73] Route TermSurf mouse input through Chromium router
+Subject: [PATCH 50/76] Route TermSurf mouse input through Chromium router
 
 ---
  .../ts_browser_main_parts.cc                  | 168 +++++++++++++-----
  1 file changed, 124 insertions(+), 44 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 7e3908d178ac0..7d74321e1fb71 100644
+index 7e3908d178..7d74321e1f 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -80,6 +80,55 @@ bool Issue794InputTraceEnabled() {
@@ -210,5 +210,5 @@ index 7e3908d178ac0..7d74321e1fb71 100644
  
    if (view && router) {
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

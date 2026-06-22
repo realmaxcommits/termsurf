@@ -1,7 +1,7 @@
-From 99fe3d9409c4e7d560ccf29c451419523df6fa7f Mon Sep 17 00:00:00 2001
+From 797aa4897cfaaad153503ad04dfaeb9057a0508c Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 22:43:21 -0500
-Subject: [PATCH 72/73] Auto-select upload fixtures
+Subject: [PATCH 72/76] Auto-select upload fixtures
 
 A hidden switch picks one small file,
 Then sends it through the browser aisle.
@@ -18,7 +18,7 @@ Just fixture bytes that make it home.
  create mode 100644 content/libtermsurf_chromium/ts_file_select_helper.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 0d69e9f14dab8..d4b6346d10333 100644
+index 0d69e9f14d..d4b6346d10 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -55,6 +55,8 @@ shared_library("libtermsurf_chromium") {
@@ -32,7 +32,7 @@ index 0d69e9f14dab8..d4b6346d10333 100644
      "ts_javascript_dialog_manager.cc",
 diff --git a/content/libtermsurf_chromium/ts_file_select_helper.cc b/content/libtermsurf_chromium/ts_file_select_helper.cc
 new file mode 100644
-index 0000000000000..6b2cf6e142e7a
+index 0000000000..6b2cf6e142
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_file_select_helper.cc
 @@ -0,0 +1,144 @@
@@ -182,7 +182,7 @@ index 0000000000000..6b2cf6e142e7a
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_file_select_helper.h b/content/libtermsurf_chromium/ts_file_select_helper.h
 new file mode 100644
-index 0000000000000..4d2a809766bbf
+index 0000000000..4d2a809766
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_file_select_helper.h
 @@ -0,0 +1,25 @@
@@ -212,7 +212,7 @@ index 0000000000000..4d2a809766bbf
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_FILE_SELECT_HELPER_H_
 diff --git a/content/libtermsurf_chromium/ts_javascript_dialog_manager.cc b/content/libtermsurf_chromium/ts_javascript_dialog_manager.cc
-index d006de0adad2f..13677c2bb164b 100644
+index d006de0ada..13677c2bb1 100644
 --- a/content/libtermsurf_chromium/ts_javascript_dialog_manager.cc
 +++ b/content/libtermsurf_chromium/ts_javascript_dialog_manager.cc
 @@ -10,6 +10,8 @@
@@ -251,7 +251,7 @@ index d006de0adad2f..13677c2bb164b 100644
 +
  }  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_javascript_dialog_manager.h b/content/libtermsurf_chromium/ts_javascript_dialog_manager.h
-index dd63f867bf281..54b22db28572e 100644
+index dd63f867bf..54b22db285 100644
 --- a/content/libtermsurf_chromium/ts_javascript_dialog_manager.h
 +++ b/content/libtermsurf_chromium/ts_javascript_dialog_manager.h
 @@ -63,6 +63,9 @@ class TsShellPlatformDelegate : public ShellPlatformDelegate {
@@ -265,5 +265,5 @@ index dd63f867bf281..54b22db28572e 100644
  
  }  // namespace content
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

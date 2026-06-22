@@ -1,7 +1,7 @@
-From 2e628c059bb077c30052e6d4a1413be858498adc Mon Sep 17 00:00:00 2001
+From caef0456ae357a1286ad2219efd03c4fc96f9be6 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 18:09:03 -0500
-Subject: [PATCH 64/73] Default-deny PaymentRequest
+Subject: [PATCH 64/76] Default-deny PaymentRequest
 
 A checkout knocked with wallet dreams,
 We answered with polite regimes:
@@ -17,7 +17,7 @@ Just false and unsupported, clean and slow.
  create mode 100644 content/libtermsurf_chromium/ts_payment_request.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 7d41a23c17890..c09c75e08498e 100644
+index 7d41a23c17..c09c75e084 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -67,6 +67,8 @@ shared_library("libtermsurf_chromium") {
@@ -30,7 +30,7 @@ index 7d41a23c17890..c09c75e08498e 100644
      "ts_plugin_response_interceptor_url_loader_throttle.h",
      "ts_plugin_utils.cc",
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 821d4402e74b3..3c9c535559926 100644
+index 821d4402e7..3c9c535559 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -6,6 +6,7 @@
@@ -60,7 +60,7 @@ index 821d4402e74b3..3c9c535559926 100644
    map->Add<blink::mojom::BadgeService>(base::BindRepeating(
 diff --git a/content/libtermsurf_chromium/ts_payment_request.cc b/content/libtermsurf_chromium/ts_payment_request.cc
 new file mode 100644
-index 0000000000000..8e5f0c3d990bc
+index 0000000000..8e5f0c3d99
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_payment_request.cc
 @@ -0,0 +1,88 @@
@@ -154,7 +154,7 @@ index 0000000000000..8e5f0c3d990bc
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_payment_request.h b/content/libtermsurf_chromium/ts_payment_request.h
 new file mode 100644
-index 0000000000000..0813a9ebd14f2
+index 0000000000..0813a9ebd1
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_payment_request.h
 @@ -0,0 +1,21 @@
@@ -180,5 +180,5 @@ index 0000000000000..0813a9ebd14f2
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_PAYMENT_REQUEST_H_
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

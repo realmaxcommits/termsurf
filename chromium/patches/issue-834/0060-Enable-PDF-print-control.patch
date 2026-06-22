@@ -1,7 +1,7 @@
-From 00c280eb3bda4a25f0465cfe7c92f52e9eb06fcc Mon Sep 17 00:00:00 2001
+From d72c64c9801b20b93004a1a8f08eadec5d31046f Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 14:49:06 -0500
-Subject: [PATCH 60/73] Enable PDF print control
+Subject: [PATCH 60/76] Enable PDF print control
 
 ---
  ...ts_component_extension_resource_manager.cc | 19 ++++---------------
@@ -9,7 +9,7 @@ Subject: [PATCH 60/73] Enable PDF print control
  2 files changed, 8 insertions(+), 29 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
-index 8ae248aad7510..bb9dbcfddda5b 100644
+index 8ae248aad7..bb9dbcfddd 100644
 --- a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 @@ -25,19 +25,6 @@ base::FilePath NormalizeAsciiPath(const char* path) {
@@ -46,7 +46,7 @@ index 8ae248aad7510..bb9dbcfddda5b 100644
        IsTermSurfPdfPrintBridgeTraceActive() ? "true" : "false";
  
 diff --git a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
-index f499f61de8686..e602f34bce1fd 100644
+index f499f61de8..e602f34bce 100644
 --- a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 @@ -25,19 +25,6 @@ namespace {
@@ -82,5 +82,5 @@ index f499f61de8686..e602f34bce1fd 100644
             IsTermSurfPdfPrintBridgeTraceActive());
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

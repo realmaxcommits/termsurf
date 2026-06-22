@@ -1,7 +1,7 @@
-From 7520415196a76c1dca84b55c4c6bf59df79fbfb4 Mon Sep 17 00:00:00 2001
+From 19acc7ff908a9585413009afbbd65cdf76effb72 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 06:14:06 -0500
-Subject: [PATCH 15/73] Trace PagePopup deactivation
+Subject: [PATCH 15/76] Trace PagePopup deactivation
 
 When Wezboard leaves the stage,
 Chromium keeps the props in view;
@@ -14,7 +14,7 @@ Now the logs catch who missed the cue.
  4 files changed, 156 insertions(+), 1 deletion(-)
 
 diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
-index dd90db82df276..64078047c1a5c 100644
+index dd90db82df..64078047c1 100644
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
 @@ -161,6 +161,43 @@ void Issue779TraceWebviewBounds(const char* event,
@@ -61,7 +61,7 @@ index dd90db82df276..64078047c1a5c 100644
  }  // namespace
  
  ////////////////////////////////////////////////////////////////////////////////
-@@ -533,6 +570,7 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -533,6 +570,7 @@ void RenderWidgetHostViewMac::InitAsPopup(
          << " window_frame_in_screen=" << window_frame_in_screen_dip_.ToString()
          << " view_bounds_in_window=" << view_bounds_in_window_dip_.ToString()
          << " computed_view_bounds=" << GetViewBounds().ToString()
@@ -69,7 +69,7 @@ index dd90db82df276..64078047c1a5c 100644
          << " date_popup_y_delta"
          << " input_anchor_top_left=" << anchor_rect.ToString()
          << " init_as_popup_pos=" << pos.ToString()
-@@ -578,7 +616,8 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -578,7 +616,8 @@ void RenderWidgetHostViewMac::InitAsPopup(
          << " anchor_rect=" << anchor_rect.ToString()
          << " window_frame_in_screen=" << window_frame_in_screen_dip_.ToString()
          << " view_bounds_in_window=" << view_bounds_in_window_dip_.ToString()
@@ -80,7 +80,7 @@ index dd90db82df276..64078047c1a5c 100644
    Show();
  }
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 2d1b6232a7e52..50db87c66242a 100644
+index 2d1b6232a7..50db87c662 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -72,6 +72,9 @@ TsBrowserMainParts::TabState::TabState() = default;
@@ -94,7 +94,7 @@ index 2d1b6232a7e52..50db87c66242a 100644
    TsNotifyInitialized(this);
  }
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.h b/content/libtermsurf_chromium/ts_shell_window_mac.h
-index 9b7d1b6560c39..e38402016615a 100644
+index 9b7d1b6560..e384020166 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.h
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.h
 @@ -11,6 +11,8 @@ namespace content {
@@ -107,7 +107,7 @@ index 9b7d1b6560c39..e38402016615a 100644
  
  void MoveShellWindowToTermSurfScreenRect(Shell* shell,
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.mm b/content/libtermsurf_chromium/ts_shell_window_mac.mm
-index e7274e97d7ea4..bcd0717aee802 100644
+index e7274e97d7..bcd0717aee 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.mm
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.mm
 @@ -60,8 +60,119 @@ NSRect PrimaryScreenFrame() {
@@ -231,5 +231,5 @@ index e7274e97d7ea4..bcd0717aee802 100644
    if (!shell)
      return;
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

@@ -1,7 +1,7 @@
-From f669626531aa44d01324c5129971875bffdb6a8a Mon Sep 17 00:00:00 2001
+From 309ef605233ed9dec5d70148ed5e2ec323caaebb Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Mon, 18 May 2026 08:38:27 -0500
-Subject: [PATCH 08/73] Adapt Shell popup hook for Chromium 148
+Subject: [PATCH 08/76] Adapt Shell popup hook for Chromium 148
 
 Two new args knocked at Shell,
 Old override lost its hat.
@@ -13,7 +13,7 @@ And sent popups to the mat.
  2 files changed, 4 insertions(+)
 
 diff --git a/content/shell/browser/shell.cc b/content/shell/browser/shell.cc
-index 9e91ec368fafa..41798560ab9ca 100644
+index 9e91ec368f..41798560ab 100644
 --- a/content/shell/browser/shell.cc
 +++ b/content/shell/browser/shell.cc
 @@ -373,6 +373,8 @@ WebContents* Shell::CreateCustomWebContents(
@@ -26,7 +26,7 @@ index 9e91ec368fafa..41798560ab9ca 100644
      SessionStorageNamespace* session_storage_namespace) {
    // Issue 750: No custom WebContents — creation is fully suppressed.
 diff --git a/content/shell/browser/shell.h b/content/shell/browser/shell.h
-index 4edb2c4dcc054..83c0df7f00ca2 100644
+index 4edb2c4dcc..83c0df7f00 100644
 --- a/content/shell/browser/shell.h
 +++ b/content/shell/browser/shell.h
 @@ -137,6 +137,8 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
@@ -39,5 +39,5 @@ index 4edb2c4dcc054..83c0df7f00ca2 100644
        SessionStorageNamespace* session_storage_namespace) override;
    void LoadingStateChanged(WebContents* source,
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

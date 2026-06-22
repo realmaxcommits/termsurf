@@ -1,7 +1,7 @@
-From 1079c58d633162dfbab7e9245d8b5a7e3f8ed627 Mon Sep 17 00:00:00 2001
+From c842884c7454aacb3549dbd78f62bc2bf592f11f Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 14:54:25 -0500
-Subject: [PATCH 40/73] Trace PDF wrapper startup
+Subject: [PATCH 40/76] Trace PDF wrapper startup
 
 The wrapper brought an empty tray,
 No iframe soup was served today.
@@ -15,7 +15,7 @@ And point toward the missing brine.
  4 files changed, 95 insertions(+), 3 deletions(-)
 
 diff --git a/chrome/browser/pdf/pdf_viewer_stream_manager.cc b/chrome/browser/pdf/pdf_viewer_stream_manager.cc
-index acb532210d3c4..93e0ecdafc13c 100644
+index acb532210d..93e0ecdafc 100644
 --- a/chrome/browser/pdf/pdf_viewer_stream_manager.cc
 +++ b/chrome/browser/pdf/pdf_viewer_stream_manager.cc
 @@ -538,6 +538,19 @@ void PdfViewerStreamManager::DidFinishNavigation(
@@ -105,7 +105,7 @@ index acb532210d3c4..93e0ecdafc13c 100644
              << "frame_tree_node_id=" << extension_host_frame_tree_node_id
              << " embedder=" << embedder_host->GetFrameTreeNodeId();
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.cc b/content/libtermsurf_chromium/ts_content_renderer_client.cc
-index b3ad28199d92e..005df4d8de1e3 100644
+index b3ad28199d..005df4d8de 100644
 --- a/content/libtermsurf_chromium/ts_content_renderer_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 @@ -111,6 +111,10 @@ bool TsContentRendererClient::IsPluginHandledExternally(
@@ -138,7 +138,7 @@ index b3ad28199d92e..005df4d8de1e3 100644
    }
    return ShellContentRendererClient::OverrideCreatePlugin(render_frame, params,
 diff --git a/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc b/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
-index ad21ea54679ae..8637dda722dea 100644
+index ad21ea5467..8637dda722 100644
 --- a/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
 +++ b/content/libtermsurf_chromium/ts_plugin_response_interceptor_url_loader_throttle.cc
 @@ -204,6 +204,23 @@ void TsPluginResponseInterceptorURLLoaderThrottle::WillProcessResponse(
@@ -166,7 +166,7 @@ index ad21ea54679ae..8637dda722dea 100644
              << "frame_tree_node_id=" << frame_tree_node_id_
              << " internal_id=" << internal_id;
 diff --git a/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc b/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc
-index 897d420db6ef4..2d382b5cc3558 100644
+index 897d420db6..2d382b5cc3 100644
 --- a/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc
 +++ b/extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.cc
 @@ -88,6 +88,8 @@ void MimeHandlerViewEmbedder::DidStartNavigation(
@@ -249,5 +249,5 @@ index 897d420db6ef4..2d382b5cc3558 100644
  }
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

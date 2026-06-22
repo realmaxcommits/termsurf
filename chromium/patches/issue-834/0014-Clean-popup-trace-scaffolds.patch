@@ -1,7 +1,7 @@
-From 12529b603361df874d9f594111fdd84d8eb4c8c6 Mon Sep 17 00:00:00 2001
+From ee7d0323efe922a6a27f633b428fb926b6300fe8 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 05:44:25 -0500
-Subject: [PATCH 14/73] Clean popup trace scaffolds
+Subject: [PATCH 14/76] Clean popup trace scaffolds
 
 Old watchers packed their clipboards away,
 While popups kept their place in the play.
@@ -21,10 +21,10 @@ The Shell still dodges every hand.
  10 files changed, 1370 insertions(+), 390 deletions(-)
 
 diff --git a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-index 0dcc059a4b9b6..cc8ac6504c64e 100644
+index 0dcc059a4b..cc8ac6504c 100644
 --- a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
 +++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-@@ -41,6 +41,148 @@ void Issue779TraceAnnounce() {
+@@ -41,6 +41,148 @@ std::string Issue779NSRectToString(NSRect rect) {
    return base::SysNSStringToUTF8(NSStringFromRect(rect));
  }
  
@@ -173,7 +173,7 @@ index 0dcc059a4b9b6..cc8ac6504c64e 100644
  }  // namespace
  
  @interface MenuWasRunCallbackHolder : NSObject
-@@ -164,28 +306,59 @@ - (void)runMenuInView:(NSView*)view
+@@ -164,28 +306,59 @@ std::string Issue779NSRectToString(NSRect rect) {
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
      NSRect windowBounds = [view convertRect:bounds toView:nil];
@@ -240,7 +240,7 @@ index 0dcc059a4b9b6..cc8ac6504c64e 100644
    // In a testing situation, make the callback and early-exit.
    MenuWasRunCallbackHolder* holder =
        objc_getAssociatedObject(view, &kMenuWasRunCallbackKey);
-@@ -261,30 +434,111 @@ - (void)runMenuInView:(NSView*)view
+@@ -261,30 +434,111 @@ std::string Issue779NSRectToString(NSRect rect) {
          fakeControlView.window
              ? [fakeControlView.window convertRectToScreen:fakeWindowBounds]
              : NSZeroRect;
@@ -366,7 +366,7 @@ index 0dcc059a4b9b6..cc8ac6504c64e 100644
  
    // Starting with macOS 14, menus were reimplemented with Cocoa (rather than
 diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
-index 298375dc255ed..dd90db82df276 100644
+index 298375dc25..dd90db82df 100644
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
 @@ -6,6 +6,7 @@
@@ -388,7 +388,7 @@ index 298375dc255ed..dd90db82df276 100644
  using blink::WebTouchEvent;
  
  namespace content {
-@@ -117,7 +118,8 @@
+@@ -117,7 +118,8 @@ enum class GetCachedFirstRectResult {
  // LINT.ThenChange(//tools/metrics/histograms/metadata/input/enums.xml:GetCachedFirstRectResult)
  
  bool Issue779TraceEnabled() {
@@ -420,7 +420,7 @@ index 298375dc255ed..dd90db82df276 100644
              << " input=" << input.ToString()
              << " view_bounds_in_window=" << view_bounds_in_window.ToString()
              << " window_frame_in_screen=" << window_frame_in_screen.ToString()
-@@ -226,8 +234,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -226,8 +234,9 @@ void RenderWidgetHostViewMac::AcceleratedWidgetCALayerParamsUpdated() {
        browser_compositor_->GetLastCALayerParams();
    if (ca_layer_params) {
      ns_view_->SetCALayerParams(*ca_layer_params);
@@ -431,7 +431,7 @@ index 298375dc255ed..dd90db82df276 100644
    }
  }
  
-@@ -349,8 +358,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -349,8 +358,9 @@ void RenderWidgetHostViewMac::MigrateNSViewBridge(
    // destroying the associated bridge), and close the receiver (to allow it
    // to be re-bound). Note that |in_process_ns_view_bridge_| remains valid.
    remote_ns_view_client_receiver_.reset();
@@ -442,7 +442,7 @@ index 298375dc255ed..dd90db82df276 100644
    remote_ns_view_.reset();
  
    // Enable accessibility focus overriding for remote NSViews.
-@@ -419,8 +429,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -419,8 +429,9 @@ void RenderWidgetHostViewMac::MigrateNSViewBridge(
  
    // Popup windows will specify an invalid |parent_ns_view_id|, because popups
    // have their own NSWindows (of which they are the content NSView).
@@ -453,7 +453,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::SetParentUiLayer(ui::Layer* parent_ui_layer) {
-@@ -436,8 +447,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -436,8 +447,9 @@ void RenderWidgetHostViewMac::SetParentUiLayer(ui::Layer* parent_ui_layer) {
      // https://crbug.com/1222976#c49.
      ns_view_->DisableDisplay();
    }
@@ -464,7 +464,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::SetParentAccessibilityElement(
-@@ -447,8 +459,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -447,8 +459,9 @@ void RenderWidgetHostViewMac::SetParentAccessibilityElement(
  }
  
  RenderWidgetHostViewCocoa* RenderWidgetHostViewMac::GetInProcessNSView() const {
@@ -475,7 +475,7 @@ index 298375dc255ed..dd90db82df276 100644
    return nullptr;
  }
  
-@@ -458,8 +471,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -458,8 +471,9 @@ void RenderWidgetHostViewMac::SetDelegate(
  }
  
  ui::TextInputType RenderWidgetHostViewMac::GetTextInputType() {
@@ -486,7 +486,7 @@ index 298375dc255ed..dd90db82df276 100644
    return text_input_manager_->GetTextInputState()->type;
  }
  
-@@ -492,20 +506,41 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -492,20 +506,41 @@ void RenderWidgetHostViewMac::InitAsPopup(
      const gfx::Rect& pos,
      const gfx::Rect& anchor_rect) {
    DCHECK_EQ(widget_type_, WidgetType::kPopup);
@@ -540,7 +540,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    RenderWidgetHostViewMac* old_child =
        popup_parent_host_view_->popup_child_host_view_;
-@@ -528,6 +563,23 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -528,6 +563,23 @@ void RenderWidgetHostViewMac::InitAsPopup(
  
    // This path is used by the time/date picker.
    ns_view_->InitAsPopup(pos, popup_parent_host_view_->ns_view_id_);
@@ -564,7 +564,7 @@ index 298375dc255ed..dd90db82df276 100644
    Show();
  }
  
-@@ -540,8 +592,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -540,8 +592,9 @@ RenderWidgetHostViewMac::GetFocusedViewForTextSelection() {
  
  RenderWidgetHostDelegate*
  RenderWidgetHostViewMac::GetFocusedRenderWidgetHostDelegate() {
@@ -575,7 +575,7 @@ index 298375dc255ed..dd90db82df276 100644
    return host()->delegate();
  }
  
-@@ -552,8 +605,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -552,8 +605,9 @@ RenderWidgetHostImpl* RenderWidgetHostViewMac::GetWidgetForKeyboardEvent() {
  }
  
  RenderWidgetHostImpl* RenderWidgetHostViewMac::GetWidgetForIme() {
@@ -586,7 +586,7 @@ index 298375dc255ed..dd90db82df276 100644
    return GetActiveWidget();
  }
  
-@@ -670,17 +724,15 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -670,17 +724,15 @@ void RenderWidgetHostViewMac::SetSize(const gfx::Size& size) {
  }
  
  void RenderWidgetHostViewMac::SetBounds(const gfx::Rect& rect) {
@@ -612,7 +612,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // Check if running with no associated NSWindow and force bounds change
    // propagation. This occurs while running headless and causes problems with
-@@ -701,8 +753,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -701,8 +753,9 @@ gfx::NativeViewAccessible RenderWidgetHostViewMac::GetNativeViewAccessible() {
  void RenderWidgetHostViewMac::Focus() {
    // Ignore redundant calls, as they can cause unending loops of focus-setting.
    // crbug.com/998123, crbug.com/804184.
@@ -623,7 +623,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    base::AutoReset<bool> is_getting_focus_bit(&is_getting_focus_, true);
    ns_view_->MakeFirstResponder();
-@@ -799,15 +852,17 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -799,15 +852,17 @@ void RenderWidgetHostViewMac::OnUpdateTextInputStateCalled(
      TextInputManager* text_input_manager,
      RenderWidgetHostViewBase* updated_view,
      bool did_update_state) {
@@ -644,7 +644,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // |updated_view| is the last view to change its TextInputState which can be
    // used to start/stop monitoring composition info when it has a focused
-@@ -818,8 +873,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -818,8 +873,9 @@ void RenderWidgetHostViewMac::OnUpdateTextInputStateCalled(
    // We might end up here when |updated_view| has had active TextInputState and
    // then got destroyed. In that case, |updated_view->GetRenderWidgetHost()|
    // returns nullptr.
@@ -655,7 +655,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // Set the monitor state based on the text input focus state.
    const bool has_focus = HasFocus();
-@@ -856,8 +912,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -856,8 +912,9 @@ void RenderWidgetHostViewMac::OnImeCompositionRangeChanged(
      bool character_bounds_changed) {
    const TextInputManager::CompositionRangeInfo* info =
        GetCompositionRangeInfo();
@@ -666,7 +666,7 @@ index 298375dc255ed..dd90db82df276 100644
    // The RangeChanged message is only sent with valid values. The current
    // caret position (start == end) will be sent if there is no IME range.
    ns_view_->SetCompositionRangeInfo(info->range);
-@@ -870,17 +927,20 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -870,17 +927,20 @@ void RenderWidgetHostViewMac::OnSelectionBoundsChanged(
  
    // The rest of the code is to support the Mac Zoom feature tracking the
    // text caret; we can skip it if that feature is not currently enabled.
@@ -690,7 +690,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // Create a rectangle for the edge of the selection focus, which will be
    // the same as the caret position if the selection is collapsed. That's
-@@ -902,8 +962,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -902,8 +962,9 @@ void RenderWidgetHostViewMac::OnTextSelectionChanged(
    DCHECK_EQ(GetTextInputManager(), text_input_manager);
  
    const TextInputManager::TextSelection* selection = GetTextSelection();
@@ -701,7 +701,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    ns_view_->SetTextSelection(selection->text(), selection->offset(),
                               selection->range());
-@@ -954,8 +1015,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -954,8 +1015,9 @@ void RenderWidgetHostViewMac::Destroy() {
    ns_view_ = nullptr;
    in_process_ns_view_bridge_.reset();
    remote_ns_view_client_receiver_.reset();
@@ -712,7 +712,7 @@ index 298375dc255ed..dd90db82df276 100644
    remote_ns_view_.reset();
  
    // Delete the delegated frame state, which will reach back into
-@@ -966,8 +1028,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -966,8 +1028,9 @@ void RenderWidgetHostViewMac::Destroy() {
    // we release host().
    NotifyObserversAboutShutdown();
  
@@ -723,7 +723,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    mouse_wheel_phase_handler_.IgnorePendingWheelEndEvent();
  
-@@ -979,8 +1042,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -979,8 +1042,9 @@ void RenderWidgetHostViewMac::Destroy() {
  
  void RenderWidgetHostViewMac::UpdateTooltipUnderCursor(
      const std::u16string& tooltip_text) {
@@ -734,7 +734,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::UpdateTooltip(
-@@ -1034,8 +1098,9 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -1034,8 +1098,9 @@ void RenderWidgetHostViewMac::UpdateScreenInfo() {
    // and for web platform APIs that expose screen and window info and events.
    // RenderWidgetHostImpl will query BrowserCompositorMac for the dimensions
    // to send to the renderer, so BrowserCompositorMac must be updated first.
@@ -745,7 +745,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  viz::ScopedSurfaceIdAllocator
-@@ -1209,8 +1274,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1209,8 +1274,9 @@ void RenderWidgetHostViewMac::TakeFallbackContentFrom(
    // in the NSView for |view_mac|.
    const gfx::CALayerParams* ca_layer_params =
        view_mac->browser_compositor_->GetLastCALayerParams();
@@ -756,7 +756,7 @@ index 298375dc255ed..dd90db82df276 100644
    browser_compositor_->TakeFallbackContentFrom(
        view_mac->browser_compositor_.get());
  }
-@@ -1228,8 +1294,10 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1228,8 +1294,10 @@ bool RenderWidgetHostViewMac::GetLineBreakIndex(
      const gfx::Range& range,
      size_t* line_break_point) {
    DCHECK(line_break_point);
@@ -768,7 +768,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // We can't check line breaking completely from only rectangle array. Thus we
    // assume the line breaking as the next character's y offset is larger than
-@@ -1264,8 +1332,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1264,8 +1332,9 @@ gfx::Rect RenderWidgetHostViewMac::GetFirstRectForCompositionRange(
  
    const TextInputManager::CompositionRangeInfo* composition_info =
        GetCompositionRangeInfo();
@@ -779,7 +779,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    DCHECK(actual_range);
    DCHECK(!composition_info->character_bounds.empty());
-@@ -1303,17 +1372,21 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1303,17 +1372,21 @@ gfx::Range RenderWidgetHostViewMac::ConvertCharacterRangeToCompositionRange(
      const gfx::Range& request_range) {
    const TextInputManager::CompositionRangeInfo* composition_info =
        GetCompositionRangeInfo();
@@ -805,7 +805,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // Heuristic: truncate the request range within the composition range.
    uint32_t truncated_request_start =
-@@ -1358,8 +1431,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1358,8 +1431,9 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
    if (selection->range().is_empty() &&
        requested_range.start() == selection->range().end()) {
      DCHECK(GetFocusedWidget());
@@ -816,7 +816,7 @@ index 298375dc255ed..dd90db82df276 100644
  
      // Check selection bounds first (currently populated only for EditContext)
      const std::optional<gfx::Rect> text_selection_bound =
-@@ -1367,8 +1441,7 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1367,8 +1441,7 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
      if (text_selection_bound) {
        *rect = text_selection_bound.value();
        TRACE_EVENT1(
@@ -826,7 +826,7 @@ index 298375dc255ed..dd90db82df276 100644
            "GetTextSelectionBounds", rect->ToString());
        return log_result(GetCachedFirstRectResult::kFound);
      }
-@@ -1377,9 +1450,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1377,9 +1450,9 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
      *rect = GetTextInputManager()
                  ->GetSelectionRegion(GetFocusedWidget()->GetView())
                  ->caret_rect;
@@ -839,7 +839,7 @@ index 298375dc255ed..dd90db82df276 100644
      return log_result(GetCachedFirstRectResult::kFound);
    }
  
-@@ -1390,14 +1463,15 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1390,14 +1463,15 @@ bool RenderWidgetHostViewMac::GetCachedFirstRectForCharacterRange(
        return log_result(GetCachedFirstRectResult::kNotBoundedBySelection);
      }
      DCHECK(GetFocusedWidget());
@@ -859,7 +859,7 @@ index 298375dc255ed..dd90db82df276 100644
      return log_result(GetCachedFirstRectResult::kFound);
    }
  
-@@ -1509,8 +1583,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1509,8 +1583,9 @@ void RenderWidgetHostViewMac::UnlockPointer() {
    ns_view_->SetCursorLocked(false);
    ns_view_->SetCursorLockedUnacceleratedMovement(false);
  
@@ -870,7 +870,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  bool RenderWidgetHostViewMac::GetIsPointerLockedUnadjustedMovementForTesting() {
-@@ -1530,8 +1605,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1530,8 +1605,9 @@ bool RenderWidgetHostViewMac::LockKeyboard(
    std::optional<std::vector<uint32_t>> uint_dom_codes;
    if (dom_codes) {
      uint_dom_codes.emplace();
@@ -881,7 +881,7 @@ index 298375dc255ed..dd90db82df276 100644
    }
    is_keyboard_locked_ = true;
    ns_view_->LockKeyboard(uint_dom_codes);
-@@ -1539,8 +1615,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1539,8 +1615,9 @@ bool RenderWidgetHostViewMac::LockKeyboard(
  }
  
  void RenderWidgetHostViewMac::UnlockKeyboard() {
@@ -892,7 +892,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    is_keyboard_locked_ = false;
    ns_view_->UnlockKeyboard();
-@@ -1639,8 +1716,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1639,8 +1716,9 @@ bool RenderWidgetHostViewMac::ShouldRouteEvents() const {
    // Event routing requires a valid frame sink (that is, that we be connected to
    // a ui::Compositor), which is not guaranteed to be the case.
    // https://crbug.com/844095
@@ -903,7 +903,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    return host()->delegate() && host()->delegate()->GetInputEventRouter();
  }
-@@ -1661,8 +1739,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1661,8 +1739,9 @@ void RenderWidgetHostViewMac::InjectTouchEvent(
      const ui::LatencyInfo& latency_info) {
    ui::FilteredGestureProvider::TouchHandlingResult result =
        gesture_provider_.OnTouchEvent(MotionEventWeb(event));
@@ -914,7 +914,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    if (ShouldRouteEvents()) {
      WebTouchEvent touch_event(event);
-@@ -1698,8 +1777,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1698,8 +1777,9 @@ viz::FrameSinkId RenderWidgetHostViewMac::GetRootFrameSinkId() {
  viz::SurfaceId RenderWidgetHostViewMac::GetCurrentSurfaceId() const {
    // |browser_compositor_| could be null if this method is called during its
    // destruction.
@@ -925,7 +925,7 @@ index 298375dc255ed..dd90db82df276 100644
    return browser_compositor_->GetDelegatedFrameHost()->GetCurrentSurfaceId();
  }
  
-@@ -1713,16 +1793,19 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1713,16 +1793,19 @@ void RenderWidgetHostViewMac::SetActive(bool active) {
    if (host()) {
      UpdateActiveState(active);
      if (active) {
@@ -948,7 +948,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::ShowDefinitionForSelection() {
-@@ -1756,8 +1839,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1756,8 +1839,9 @@ viz::SurfaceId RenderWidgetHostViewMac::GetFallbackSurfaceIdForTesting() const {
  }
  
  void RenderWidgetHostViewMac::SetBackgroundLayerColor(SkColor color) {
@@ -959,7 +959,7 @@ index 298375dc255ed..dd90db82df276 100644
    background_layer_color_ = color;
    ns_view_->SetBackgroundColor(color);
  }
-@@ -1773,10 +1857,11 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1773,10 +1857,11 @@ void RenderWidgetHostViewMac::DisableDisplayFeatureOverrideForEmulation() {
  
  void RenderWidgetHostViewMac::OverrideDisplayFeatureForEmulation(
      const DisplayFeature* display_feature) {
@@ -973,7 +973,7 @@ index 298375dc255ed..dd90db82df276 100644
    host()->SynchronizeVisualProperties();
  }
  
-@@ -1869,8 +1954,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1869,8 +1954,9 @@ void RenderWidgetHostViewMac::RequestShutdown() {
  }
  
  void RenderWidgetHostViewMac::OnFirstResponderChanged(bool is_first_responder) {
@@ -984,7 +984,7 @@ index 298375dc255ed..dd90db82df276 100644
    is_first_responder_ = is_first_responder;
    accessibility_focus_overrider_.SetViewIsFirstResponder(is_first_responder_);
  
-@@ -1906,22 +1992,23 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1906,22 +1992,23 @@ void RenderWidgetHostViewMac::OnFirstResponderChanged(bool is_first_responder) {
  }
  
  void RenderWidgetHostViewMac::OnWindowIsKeyChanged(bool is_key) {
@@ -1015,7 +1015,7 @@ index 298375dc255ed..dd90db82df276 100644
    bool view_size_changed =
        view_bounds_in_window_dip_.size() != view_bounds_in_window_dip.size();
  
-@@ -1934,38 +2021,36 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -1934,38 +2021,36 @@ void RenderWidgetHostViewMac::OnBoundsInWindowChanged(
      view_bounds_in_window_dip_.set_size(view_bounds_in_window_dip.size());
    }
  
@@ -1073,7 +1073,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::OnScreenInfosChanged(
-@@ -2036,8 +2121,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2036,8 +2121,9 @@ void RenderWidgetHostViewMac::RouteOrProcessTouchEvent(
    blink::WebTouchEvent web_event = const_web_event;
    ui::FilteredGestureProvider::TouchHandlingResult result =
        gesture_provider_.OnTouchEvent(MotionEventWeb(web_event));
@@ -1084,7 +1084,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    ui::LatencyInfo latency_info;
    latency_info.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_UI_COMPONENT);
-@@ -2072,11 +2158,13 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2072,11 +2158,13 @@ void RenderWidgetHostViewMac::RouteOrProcessWheelEvent(
  
  void RenderWidgetHostViewMac::ForwardMouseEvent(
      const blink::WebMouseEvent& web_event) {
@@ -1100,7 +1100,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::ForwardWheelEvent(
-@@ -2160,13 +2248,15 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2160,13 +2248,15 @@ void RenderWidgetHostViewMac::LookUpDictionaryOverlayFromRange(
      const gfx::Range& range) {
    content::RenderWidgetHostViewBase* focused_view =
        GetFocusedViewForTextSelection();
@@ -1118,7 +1118,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    int32_t target_widget_process_id =
        widget_host->GetProcess()->GetDeprecatedID();
-@@ -2181,8 +2271,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2181,8 +2271,9 @@ void RenderWidgetHostViewMac::LookUpDictionaryOverlayFromRange(
  void RenderWidgetHostViewMac::LookUpDictionaryOverlayAtPoint(
      const gfx::PointF& root_point_in_dips) {
    if (!host() || !host()->delegate() ||
@@ -1129,7 +1129,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    // With zoom-for-dsf, RenderWidgetHost coordinate system is physical points,
    // which means we have to scale the point by device scale factor.
-@@ -2201,12 +2292,14 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2201,12 +2292,14 @@ void RenderWidgetHostViewMac::LookUpDictionaryOverlayAtPoint(
  
    RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
        static_cast<RenderWidgetHostViewBase*>(view)->GetRenderWidgetHost());
@@ -1146,7 +1146,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    int32_t target_widget_process_id =
        widget_host->GetProcess()->GetDeprecatedID();
-@@ -2224,8 +2317,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2224,8 +2317,9 @@ bool RenderWidgetHostViewMac::SyncGetCharacterIndexAtPoint(
    *index = UINT32_MAX;
  
    if (!host() || !host()->delegate() ||
@@ -1157,7 +1157,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    gfx::PointF transformed_point;
    auto* view = host()
-@@ -2239,8 +2333,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2239,8 +2333,9 @@ bool RenderWidgetHostViewMac::SyncGetCharacterIndexAtPoint(
  
    RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
        static_cast<RenderWidgetHostViewBase*>(view)->GetRenderWidgetHost());
@@ -1168,7 +1168,7 @@ index 298375dc255ed..dd90db82df276 100644
  
    *index = TextInputClientMac::GetInstance()->GetCharacterIndexAtPoint(
        widget_host, gfx::ToFlooredPoint(transformed_point));
-@@ -2333,8 +2428,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2333,8 +2428,9 @@ void RenderWidgetHostViewMac::Copy() {
  
  void RenderWidgetHostViewMac::CopyToFindPboard() {
    WebContents* web_contents = GetWebContents();
@@ -1179,7 +1179,7 @@ index 298375dc255ed..dd90db82df276 100644
  }
  
  void RenderWidgetHostViewMac::CenterSelection() {
-@@ -2545,8 +2641,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2545,8 +2641,9 @@ void RenderWidgetHostViewMac::OnGotStringForDictionaryOverlay(
      if (auto* selection = GetTextSelection()) {
        const std::u16string& selected_text = selection->selected_text();
        NSString* ns_selected_text = base::SysUTF16ToNSString(selected_text);
@@ -1190,7 +1190,7 @@ index 298375dc255ed..dd90db82df276 100644
        scoped_refptr<ui::UniquePasteboard> pasteboard = new ui::UniquePasteboard;
        if ([pasteboard->get() writeObjects:@[ ns_selected_text ]]) {
          NSPerformService(@"Look Up in Dictionary", pasteboard->get());
-@@ -2576,8 +2673,9 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2576,8 +2673,9 @@ void RenderWidgetHostViewMac::OnGotStringForDictionaryOverlay(
  void RenderWidgetHostViewMac::SetTooltipText(
      const std::u16string& tooltip_text) {
    ns_view_->SetTooltipText(tooltip_text);
@@ -1202,7 +1202,7 @@ index 298375dc255ed..dd90db82df276 100644
  
  void RenderWidgetHostViewMac::UpdateWindowsNow() {
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index c2527736f867a..46134bdc1cae3 100644
+index c2527736f8..46134bdc1c 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
 @@ -7,8 +7,9 @@
@@ -1499,7 +1499,7 @@ index c2527736f867a..46134bdc1cae3 100644
  
  ui::mojom::VirtualKeyboardMode WebContentsImpl::GetVirtualKeyboardMode() const {
 diff --git a/content/browser/web_contents/web_contents_view_mac.mm b/content/browser/web_contents/web_contents_view_mac.mm
-index e246118c71cb0..4ac562ffb73dc 100644
+index e246118c71..4ac562ffb7 100644
 --- a/content/browser/web_contents/web_contents_view_mac.mm
 +++ b/content/browser/web_contents/web_contents_view_mac.mm
 @@ -5,10 +5,11 @@
@@ -1665,7 +1665,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  // This helper's sole task is to write out data for a promised file; the caller
  // is responsible for opening the file. It takes the drop data and an open file
  // stream.
-@@ -138,8 +275,9 @@ void SetReadWritePermissionsForFile(base::File& file) {
+@@ -138,8 +275,9 @@ WebContentsViewMac::WebContentsViewMac(
        deferred_close_weak_ptr_factory_(this) {}
  
  WebContentsViewMac::~WebContentsViewMac() {
@@ -1676,7 +1676,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
    DCHECK(!views_host_);
    in_process_ns_view_bridge_.reset();
  }
-@@ -177,7 +315,7 @@ void SetReadWritePermissionsForFile(base::File& file) {
+@@ -177,7 +315,7 @@ gfx::Rect WebContentsViewMac::GetContainerBounds() const {
    NSWindow* window = [view window];
    NSRect bounds;
  
@@ -1685,7 +1685,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
      bounds = [view bounds];
  
      // Convert bounds to window coordinate space.
-@@ -297,37 +435,43 @@ ClipboardEndpoint source_endpoint(
+@@ -297,37 +435,43 @@ void WebContentsViewMac::StartDragging(
  }
  
  void WebContentsViewMac::Focus() {
@@ -1736,7 +1736,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  
    // Fall back to the default focus behavior if we could not restore focus.
    // TODO(shess): If location-bar gets focus by default, this will
-@@ -338,8 +482,9 @@ ClipboardEndpoint source_endpoint(
+@@ -338,8 +482,9 @@ void WebContentsViewMac::RestoreFocus() {
  }
  
  void WebContentsViewMac::FocusThroughTabTraversal(bool reverse) {
@@ -1747,7 +1747,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  
    web_contents_->GetRenderViewHost()->SetInitialFocus(reverse);
  }
-@@ -365,29 +510,34 @@ ClipboardEndpoint source_endpoint(
+@@ -365,29 +510,34 @@ void WebContentsViewMac::LostFocus(RenderWidgetHostImpl* render_widget_host) {
  // This is called when the renderer asks us to take focus back (i.e., it has
  // iterated past the last focusable element on the page).
  void WebContentsViewMac::TakeFocus(bool reverse) {
@@ -1788,7 +1788,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  }
  
  #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
-@@ -402,11 +552,44 @@ ClipboardEndpoint source_endpoint(
+@@ -402,11 +552,44 @@ void WebContentsViewMac::ShowPopupMenu(
      bool allow_multiple_selection) {
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
@@ -1835,7 +1835,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
                << " item_count=" << menu_items.size()
                << " selected_item=" << selected_item
                << " right_aligned=" << right_aligned
-@@ -414,6 +597,16 @@ ClipboardEndpoint source_endpoint(
+@@ -414,6 +597,16 @@ void WebContentsViewMac::ShowPopupMenu(
    }
    popup_menu_helper_ = std::make_unique<PopupMenuHelper>(
        this, render_frame_host, std::move(popup_client));
@@ -1852,7 +1852,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
    popup_menu_helper_->ShowPopupMenu(bounds, item_font_size, selected_item,
                                      std::move(menu_items), right_aligned,
                                      allow_multiple_selection);
-@@ -424,8 +617,46 @@ ClipboardEndpoint source_endpoint(
+@@ -424,8 +617,46 @@ void WebContentsViewMac::ShowPopupMenu(
  void WebContentsViewMac::OnMenuClosed() {
    NSView* view = GetInProcessNSView();
    [view.window setIgnoresMouseEvents:YES];
@@ -1899,7 +1899,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  }
  
  gfx::Rect WebContentsViewMac::GetViewBounds() const {
-@@ -459,8 +690,9 @@ ClipboardEndpoint source_endpoint(
+@@ -459,8 +690,9 @@ void WebContentsViewMac::CreateView(gfx::NativeView context) {
                                                                this);
  
    drag_dest_ = [[WebDragDest alloc] initWithWebContentsImpl:web_contents_];
@@ -1910,7 +1910,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  }
  
  RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
-@@ -541,8 +773,7 @@ ClipboardEndpoint source_endpoint(
+@@ -541,8 +773,7 @@ void WebContentsViewMac::RenderViewReady() {}
  void WebContentsViewMac::RenderViewHostChanged(RenderViewHost* old_host,
                                                 RenderViewHost* new_host) {}
  
@@ -1920,7 +1920,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  
  // Arrange to call CloseTab() after we're back to the main event loop.
  // The obvious way to do this would be to post a NonNestable task, but that
-@@ -556,8 +787,9 @@ ClipboardEndpoint source_endpoint(
+@@ -556,8 +787,9 @@ bool WebContentsViewMac::CloseTabAfterEventTrackingIfNeeded() {
    deferred_close_weak_ptr_factory_.InvalidateWeakPtrs();
    auto weak_ptr = deferred_close_weak_ptr_factory_.GetWeakPtr();
    CFRunLoopPerformBlock(CFRunLoopGetCurrent(), kCFRunLoopDefaultMode, ^{
@@ -1931,7 +1931,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
    });
    return true;
  }
-@@ -592,10 +824,12 @@ ClipboardEndpoint source_endpoint(
+@@ -592,10 +824,12 @@ void WebContentsViewMac::OnMouseEvent(std::unique_ptr<ui::Event> event) {
  }
  
  void WebContentsViewMac::OnBecameFirstResponder(SelectionDirection direction) {
@@ -1946,7 +1946,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  
    web_contents_->FocusThroughTabTraversal(direction ==
                                            SelectionDirection::kReverse);
-@@ -603,8 +837,9 @@ ClipboardEndpoint source_endpoint(
+@@ -603,8 +837,9 @@ void WebContentsViewMac::OnBecameFirstResponder(SelectionDirection direction) {
  
  void WebContentsViewMac::OnWindowVisibilityChanged(
      remote_cocoa::mojom::Visibility mojo_visibility) {
@@ -1957,7 +1957,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  
    // TODO: make content use the mojo type for visibility.
    Visibility visibility = Visibility::VISIBLE;
-@@ -861,31 +1096,35 @@ ClipboardEndpoint source_endpoint(
+@@ -861,31 +1096,35 @@ void WebContentsViewMac::ViewsHostableSetBounds(
      int superview_height) {
    // Update both the in-process and out-of-process NSViews' bounds.
    in_process_ns_view_bridge_->SetBounds(bounds_in_superview, superview_height);
@@ -1999,7 +1999,7 @@ index e246118c71cb0..4ac562ffb73dc 100644
  
  gfx::NativeViewAccessible
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 50db87c66242a..2d1b6232a7e52 100644
+index 50db87c662..2d1b6232a7 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -72,9 +72,6 @@ TsBrowserMainParts::TabState::TabState() = default;
@@ -2013,7 +2013,7 @@ index 50db87c66242a..2d1b6232a7e52 100644
    TsNotifyInitialized(this);
  }
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.h b/content/libtermsurf_chromium/ts_shell_window_mac.h
-index e38402016615a..9b7d1b6560c39 100644
+index e384020166..9b7d1b6560 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.h
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.h
 @@ -11,8 +11,6 @@ namespace content {
@@ -2026,7 +2026,7 @@ index e38402016615a..9b7d1b6560c39 100644
  
  void MoveShellWindowToTermSurfScreenRect(Shell* shell,
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.mm b/content/libtermsurf_chromium/ts_shell_window_mac.mm
-index f6cc839d65ca6..e7274e97d7ea4 100644
+index f6cc839d65..e7274e97d7 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.mm
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.mm
 @@ -60,87 +60,8 @@ NSRect PrimaryScreenFrame() {
@@ -2118,7 +2118,7 @@ index f6cc839d65ca6..e7274e97d7ea4 100644
    if (!shell)
      return;
 diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
-index 72d5df0b8bd8f..66b87f473e662 100644
+index 72d5df0b8b..66b87f473e 100644
 --- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 @@ -86,37 +86,38 @@
@@ -2698,7 +2698,7 @@ index 72d5df0b8bd8f..66b87f473e662 100644
                      (screen_rect.x() - opener_widget_screen_origin_.x()) *
                          opener_emulator_scale_);
 diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
-index e43d16593476a..c699ab65584fb 100644
+index e43d165934..c699ab6558 100644
 --- a/third_party/blink/renderer/core/exported/web_view_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
 @@ -249,29 +249,6 @@ namespace blink {
@@ -2893,7 +2893,7 @@ index e43d16593476a..c699ab65584fb 100644
  
  void WebViewImpl::UpdatePagePopup() {
 diff --git a/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc b/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
-index e36aa792fd20e..077986280b149 100644
+index e36aa792fd..077986280b 100644
 --- a/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
 +++ b/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
 @@ -40,6 +40,7 @@
@@ -3060,5 +3060,5 @@ index e36aa792fd20e..077986280b149 100644
    client_->DidEndChooser();
  }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

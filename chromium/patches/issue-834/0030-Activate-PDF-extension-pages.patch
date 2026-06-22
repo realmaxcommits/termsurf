@@ -1,7 +1,7 @@
-From 5734f0cd27c94514910cfa0e2a13b8998e2387b9 Mon Sep 17 00:00:00 2001
+From 49a666b7f9ea981525a74f831e91611172a5892a Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 11:32:29 -0500
-Subject: [PATCH 30/73] Activate PDF extension pages
+Subject: [PATCH 30/76] Activate PDF extension pages
 
 The viewer knocked with private keys,
 But no one blessed its Chrome-ish ways.
@@ -17,7 +17,7 @@ And Mojo shows the next brick wall.
  6 files changed, 157 insertions(+), 35 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
-index 789c4e76e5eb5..63f9aa99f23a8 100644
+index 789c4e76e5..63f9aa99f2 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 @@ -6,6 +6,7 @@
@@ -57,7 +57,7 @@ index 789c4e76e5eb5..63f9aa99f23a8 100644
  void TsExtensionsClient::InitializeWebStoreUrls(
      base::CommandLine* command_line) {}
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
-index f5ca15c500952..642482f3b351c 100644
+index f5ca15c500..642482f3b3 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 @@ -184,14 +184,21 @@ bool RegisterTsPdfComponentExtension(BrowserContext* browser_context) {
@@ -83,7 +83,7 @@ index f5ca15c500952..642482f3b351c 100644
    LOG(INFO) << "[issue-792-exp3] pdf-component-extension-stripped-keys count="
              << stripped_manifest_keys.size()
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 4a2aa122d52b3..2ff19f827194c 100644
+index 4a2aa122d5..2ff19f8271 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -21,6 +21,7 @@
@@ -115,7 +115,7 @@ index 4a2aa122d52b3..2ff19f827194c 100644
          process_id, url::Origin::CreateFromNormalizedTuple(
                          kChromeUIScheme, kChromeUIResourcesHost, 0));
 diff --git a/extensions/browser/renderer_startup_helper.cc b/extensions/browser/renderer_startup_helper.cc
-index caff8f5170c2f..9696670da6be4 100644
+index caff8f5170..9696670da6 100644
 --- a/extensions/browser/renderer_startup_helper.cc
 +++ b/extensions/browser/renderer_startup_helper.cc
 @@ -36,6 +36,7 @@
@@ -231,7 +231,7 @@ index caff8f5170c2f..9696670da6be4 100644
    // Mark the extension as unloaded.
    extension_process_map_.erase(extension.id());
 diff --git a/extensions/renderer/dispatcher.cc b/extensions/renderer/dispatcher.cc
-index fd3960fce4c61..ddf5ab11a2926 100644
+index fd3960fce4..ddf5ab11a2 100644
 --- a/extensions/renderer/dispatcher.cc
 +++ b/extensions/renderer/dispatcher.cc
 @@ -212,8 +212,8 @@ void CallModuleMethod(const std::string& module_name,
@@ -492,7 +492,7 @@ index fd3960fce4c61..ddf5ab11a2926 100644
    return false;
  }
 diff --git a/extensions/renderer/script_context_set.cc b/extensions/renderer/script_context_set.cc
-index 3fca384780c8f..25bad913601ec 100644
+index 3fca384780..25bad91360 100644
 --- a/extensions/renderer/script_context_set.cc
 +++ b/extensions/renderer/script_context_set.cc
 @@ -7,6 +7,7 @@
@@ -572,5 +572,5 @@ index 3fca384780c8f..25bad913601ec 100644
                 ? mojom::ContextType::kPrivilegedWebPage
                 : mojom::ContextType::kUnprivilegedExtension;
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

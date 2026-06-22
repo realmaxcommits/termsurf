@@ -1,7 +1,7 @@
-From ae630730d826bfc6b965b34638afabb7625ded1e Mon Sep 17 00:00:00 2001
+From 212e49b3c9c42f27053ff652f8995927f6dd7e79 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 10:33:09 -0500
-Subject: [PATCH 22/73] Cull stale popup traces
+Subject: [PATCH 22/76] Cull stale popup traces
 
 The logs grew thick as ivy vines,
 They climbed through every popup line.
@@ -32,7 +32,7 @@ And left the fixes room to stay.
  21 files changed, 652 insertions(+), 2630 deletions(-)
 
 diff --git a/components/autofill/content/browser/content_autofill_driver_factory.cc b/components/autofill/content/browser/content_autofill_driver_factory.cc
-index 19df5e050a3e7..da9e79440c1ce 100644
+index 19df5e050a..da9e79440c 100644
 --- a/components/autofill/content/browser/content_autofill_driver_factory.cc
 +++ b/components/autofill/content/browser/content_autofill_driver_factory.cc
 @@ -4,7 +4,6 @@
@@ -102,7 +102,7 @@ index 19df5e050a3e7..da9e79440c1ce 100644
    }
  }
 diff --git a/components/autofill/content/renderer/autofill_agent.cc b/components/autofill/content/renderer/autofill_agent.cc
-index 5112169500ed4..e4056cd972ec7 100644
+index 5112169500..e4056cd972 100644
 --- a/components/autofill/content/renderer/autofill_agent.cc
 +++ b/components/autofill/content/renderer/autofill_agent.cc
 @@ -8,7 +8,6 @@
@@ -320,7 +320,7 @@ index 5112169500ed4..e4056cd972ec7 100644
                                            GetCaretBounds(*render_frame),
                                            trigger_source, password_request);
 diff --git a/components/autofill/core/browser/ui/autofill_external_delegate.cc b/components/autofill/core/browser/ui/autofill_external_delegate.cc
-index 898f78e42314a..8a0c33d3675c5 100644
+index 898f78e423..8a0c33d367 100644
 --- a/components/autofill/core/browser/ui/autofill_external_delegate.cc
 +++ b/components/autofill/core/browser/ui/autofill_external_delegate.cc
 @@ -7,7 +7,6 @@
@@ -402,7 +402,7 @@ index 898f78e42314a..8a0c33d3675c5 100644
  }
  
 diff --git a/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm b/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
-index 7af7fde9ed2c7..1f3f621ba0716 100644
+index 7af7fde9ed..1f3f621ba0 100644
 --- a/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
 +++ b/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
 @@ -14,9 +14,7 @@
@@ -415,7 +415,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
  #include "base/apple/bridging.h"
  #import "base/apple/foundation_util.h"
-@@ -91,35 +89,6 @@ CG_EXTERN CGError CGSSetWindowCaptureExcludeShape(CGSConnectionID cid,
+@@ -91,35 +89,6 @@ display::Display GetDisplayForWindow(NSWindow* window) {
        gfx::NativeWindow(window));
  }
  
@@ -462,7 +462,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    if (left_found) {
      return left_rank->second < right_rank->second ? NSOrderedAscending
-@@ -355,8 +325,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -355,8 +325,9 @@ gfx::Size NativeWidgetNSWindowBridge::GetWindowSizeForClientSize(
  NativeWidgetNSWindowBridge* NativeWidgetNSWindowBridge::GetFromId(
      uint64_t bridged_native_widget_id) {
    auto found = GetIdToWidgetImplMap().find(bridged_native_widget_id);
@@ -473,7 +473,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    return found->second;
  }
  
-@@ -667,29 +638,6 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -667,29 +638,6 @@ void NativeWidgetNSWindowBridge::SetBounds(
      const gfx::Rect& new_bounds,
      const gfx::Size& minimum_content_size,
      const std::optional<gfx::Size>& maximum_content_size) {
@@ -503,7 +503,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    // -[NSWindow contentMinSize] and [NSWindow contentMaxSize] are only checked
    // by Cocoa for user-initiated resizes. This is not what toolkit-views
    // expects, so clamp.
-@@ -711,13 +659,6 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -711,13 +659,6 @@ void NativeWidgetNSWindowBridge::SetBounds(
      // the first time. They also have no frame, so just update the content size.
      [window_ setContentSize:NSMakeSize(clamped_content_size.width(),
                                         clamped_content_size.height())];
@@ -517,7 +517,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
      return;
    }
    gfx::Rect actual_new_bounds(
-@@ -730,20 +671,6 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -730,20 +671,6 @@ void NativeWidgetNSWindowBridge::SetBounds(
              display:YES
              animate:NO];
  
@@ -538,7 +538,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    // If the window has focus but is not on the active space and the window was
    // moved to a different display, re-activate it to switch the space to the
    // active window. (crbug.com/1316543)
-@@ -808,8 +735,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -808,8 +735,9 @@ void NativeWidgetNSWindowBridge::SetSizeAndCenter(
  }
  
  void NativeWidgetNSWindowBridge::DestroyContentView() {
@@ -549,7 +549,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    [bridged_view_ clearView];
    bridged_view_id_mapping_.reset();
    bridged_view_ = nil;
-@@ -861,8 +789,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -861,8 +789,9 @@ void NativeWidgetNSWindowBridge::CreateContentView(
  }
  
  void NativeWidgetNSWindowBridge::CloseWindow() {
@@ -560,7 +560,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    // Make a local variable of the window on the stack so that the block can
    // capture a reference to it.
-@@ -902,8 +831,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -902,8 +831,9 @@ void NativeWidgetNSWindowBridge::CloseWindow() {
  
    // Defer closing windows until after fullscreen transitions complete.
    fullscreen_controller_.OnWindowWantsToClose();
@@ -571,7 +571,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    // Many tests assume that base::RunLoop().RunUntilIdle() is always sufficient
    // to execute a close. However, in rare cases, -performSelector:..afterDelay:0
-@@ -926,26 +856,6 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -926,26 +856,6 @@ void NativeWidgetNSWindowBridge::CloseWindowNow() {
  
  void NativeWidgetNSWindowBridge::SetVisibilityState(
      WindowVisibilityState new_state) {
@@ -598,7 +598,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    // During session restore this method gets called from RestoreTabsToBrowser()
    // with new_state = kShowAndActivateWindow. We consume restoration data on our
    // first time through this method so we can use its existence as an
-@@ -1039,45 +949,23 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1039,45 +949,23 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
      // DCHECK(![window_ attachedSheet]);
  
      [window_ orderOut:nil];
@@ -646,7 +646,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
        return;
      }
    }
-@@ -1091,35 +979,18 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1091,35 +979,18 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
  
    if (IsWindowModalSheet()) {
      ShowAsModalSheet();
@@ -684,7 +684,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    } else if (new_state == WindowVisibilityState::kShowInactive && !parent_ &&
               ![window_ isMiniaturized]) {
      if ([[NSApp mainWindow] screen] == [window_ screen] ||
-@@ -1130,28 +1001,10 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1130,28 +1001,10 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
        // cause a space switch.
        [window_ orderWindow:NSWindowBelow
                  relativeTo:NSApp.mainWindow.windowNumber];
@@ -713,7 +713,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
      }
    }
  
-@@ -1181,10 +1034,12 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1181,10 +1034,12 @@ void NativeWidgetNSWindowBridge::SetTransitionsToAnimate(
  }
  
  void NativeWidgetNSWindowBridge::AcquireCapture() {
@@ -728,7 +728,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    mouse_capture_ = std::make_unique<CocoaMouseCapture>(this);
    host_->OnMouseCaptureActiveChanged(true);
-@@ -1559,8 +1414,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1559,8 +1414,9 @@ void NativeWidgetNSWindowBridge::OnWindowDidEndLiveResize() {
  
  void NativeWidgetNSWindowBridge::OnVisibilityChanged() {
    const bool window_visible = [window_ isVisible];
@@ -739,7 +739,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    window_visible_ = window_visible;
  
-@@ -1570,22 +1426,25 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1570,22 +1426,25 @@ void NativeWidgetNSWindowBridge::OnVisibilityChanged() {
    // window - we might not need that.
    if (window_visible_) {
      wants_to_be_visible_ = true;
@@ -768,7 +768,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    NotifyVisibilityChangeDown();
    host_->OnVisibilityChanged(window_visible_);
-@@ -1614,8 +1473,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1614,8 +1473,9 @@ void NativeWidgetNSWindowBridge::OnWindowKeyStatusChangedTo(bool is_key) {
        [NSApp isFullKeyboardAccessEnabled]);
    // If the window just became key, this is a good chance to add child windows
    // from when the window wasn't on the current space.
@@ -779,7 +779,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  }
  
  void NativeWidgetNSWindowBridge::SetSizeConstraints(const gfx::Size& min_size,
-@@ -1624,8 +1484,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1624,8 +1484,9 @@ void NativeWidgetNSWindowBridge::SetSizeConstraints(const gfx::Size& min_size,
                                                      bool is_maximizable) {
    // Don't modify the size constraints or fullscreen collection behavior while
    // in fullscreen or during a transition.
@@ -790,7 +790,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    bool shows_resize_controls =
        is_resizable && (min_size.IsEmpty() || min_size != max_size);
-@@ -1675,12 +1536,14 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1675,12 +1536,14 @@ void NativeWidgetNSWindowBridge::SortSubviews(
      const std::vector<uint64_t>& attached_subview_ids) {
    // Ignore layer manipulation during a Close(). This can be reached during the
    // orderOut: in Close(), which notifies visibility changes to Views.
@@ -807,7 +807,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    }
    [bridged_view_ sortSubviewsUsingFunction:&SubviewSorter context:&rank];
  }
-@@ -1704,14 +1567,16 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1704,14 +1567,16 @@ bool NativeWidgetNSWindowBridge::ShouldRunCustomAnimationFor(
    // Custom animations are only used for tab-modals.
    bool widget_is_modal = false;
    host_->GetWidgetIsModal(&widget_is_modal);
@@ -826,7 +826,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
            switches::kDisableModalAnimations)) {
-@@ -1788,8 +1653,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1788,8 +1653,9 @@ void NativeWidgetNSWindowBridge::FullscreenControllerSetFrame(
      base::OnceCallback<void()> completion_callback) {
    NSRect ns_frame = gfx::ScreenRectToNSRect(frame);
    base::TimeDelta transition_time = base::Seconds(0);
@@ -837,7 +837,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    __block base::OnceCallback<void()> complete = std::move(completion_callback);
    [NSAnimationContext
-@@ -1812,8 +1678,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1812,8 +1678,9 @@ void NativeWidgetNSWindowBridge::FullscreenControllerToggleFullscreen() {
    // transitioning window (crbug.com/1338659) or changing the z-order of
    // windows on the previous space. Making the window key here seems to
    // alleviate those apparent defects (crbug.com/1392542).
@@ -848,7 +848,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  }
  
  void NativeWidgetNSWindowBridge::FullscreenControllerCloseWindow() {
-@@ -1928,8 +1795,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1928,8 +1795,9 @@ void NativeWidgetNSWindowBridge::MoveToActiveFullscreenSpace() {
  
  void NativeWidgetNSWindowBridge::SetZoomed(bool zoomed) {
    const bool window_zoomed = [window_ isZoomed];
@@ -859,7 +859,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    [window_ performZoom:nil];
  }
  
-@@ -1944,8 +1812,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1944,8 +1812,9 @@ void NativeWidgetNSWindowBridge::EnterFullscreen(int64_t target_display_id) {
    // instead of relying on AppKit to do it, and not worry that
    // OnVisibilityChanged() won't be called for externally triggered fullscreen
    // requests.
@@ -870,7 +870,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    // Enable fullscreen collection behavior because:
    // 1: -[NSWindow toggleFullscreen:] would otherwise be ignored,
-@@ -1984,14 +1853,14 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -1984,14 +1853,14 @@ void NativeWidgetNSWindowBridge::SetCanAppearInExistingFullscreenSpaces(
  }
  
  void NativeWidgetNSWindowBridge::SetMiniaturized(bool miniaturized) {
@@ -888,7 +888,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    } else {
      [window_ deminiaturize:nil];
    }
-@@ -2038,16 +1907,18 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2038,16 +1907,18 @@ void NativeWidgetNSWindowBridge::SetCALayerParams(
    // TODO(danakj): We should avoid lossy conversions to integer DIPs.
    gfx::Size frame_dip_size = gfx::ToFlooredSize(gfx::ConvertSizeToDips(
        ca_layer_params.pixel_size, ca_layer_params.scale_factor));
@@ -909,7 +909,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    if (invalidate_shadow_on_frame_swap_) {
      invalidate_shadow_on_frame_swap_ = false;
-@@ -2137,20 +2008,24 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2137,20 +2008,24 @@ void NativeWidgetNSWindowBridge::OrderChildren() {
    // Bail here (and call OrderChildren() in a few places) to defer adding
    // children until the window is visible.
    NSWindow* window = window_;
@@ -938,7 +938,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
        if (immersive_mode_controller_ &&
            immersive_mode_controller_->overlay_window() == child_window) {
          continue;
-@@ -2174,8 +2049,9 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2174,8 +2049,9 @@ void NativeWidgetNSWindowBridge::RemoveOrDestroyChildren() {
  
  void NativeWidgetNSWindowBridge::CheckAndNotifyZoomedStateChanged() {
    const bool window_zoomed = [window_ isZoomed];
@@ -949,7 +949,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
  
    window_zoomed_ = window_zoomed;
  
-@@ -2235,18 +2111,21 @@ NSUInteger CountBridgedWindows(NSArray* child_windows) {
+@@ -2235,18 +2111,21 @@ void NativeWidgetNSWindowBridge::UpdateWindowGeometry() {
    CheckAndNotifyZoomedStateChanged();
    CheckAndNotifyAllWorkspacesStateChanged();
  
@@ -975,7 +975,7 @@ index 7af7fde9ed2c7..1f3f621ba0716 100644
    host_->OnWindowDisplayChanged(GetDisplayForWindow(window_));
  }
 diff --git a/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm b/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm
-index 1dce73e879b4b..56ea568948320 100644
+index 1dce73e879..56ea568948 100644
 --- a/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm
 +++ b/content/app_shim_remote_cocoa/render_widget_host_ns_view_bridge.mm
 @@ -4,7 +4,6 @@
@@ -986,7 +986,7 @@ index 1dce73e879b4b..56ea568948320 100644
  #include <Foundation/Foundation.h>
  
  #include <string>
-@@ -42,53 +41,6 @@
+@@ -42,53 +41,6 @@ using blink::WebGestureEvent;
  
  namespace remote_cocoa {
  
@@ -1040,7 +1040,7 @@ index 1dce73e879b4b..56ea568948320 100644
  RenderWidgetHostNSViewBridge::RenderWidgetHostNSViewBridge(
      mojom::RenderWidgetHostNSViewHost* host,
      RenderWidgetHostNSViewHostHelper* host_helper,
-@@ -164,8 +116,9 @@ void Issue779TraceAnnounce() {
+@@ -164,8 +116,9 @@ void RenderWidgetHostNSViewBridge::MakeFirstResponder() {
  }
  
  void RenderWidgetHostNSViewBridge::DisableDisplay() {
@@ -1051,7 +1051,7 @@ index 1dce73e879b4b..56ea568948320 100644
    SetBackgroundColor(SK_ColorTRANSPARENT);
    display_ca_layer_tree_.reset();
    display_disabled_ = true;
-@@ -182,8 +135,9 @@ void Issue779TraceAnnounce() {
+@@ -182,8 +135,9 @@ void RenderWidgetHostNSViewBridge::SetBounds(const gfx::Rect& rect) {
    // SetSize() again. On Cocoa, we rely on the Cocoa view struture and resizer
    // flags to keep things sized properly. On the other hand, if the size is not
    // empty then this is a valid request for a pop-up.
@@ -1062,7 +1062,7 @@ index 1dce73e879b4b..56ea568948320 100644
  
    // Ignore the position of |rect| for non-popup rwhvs. This is because
    // background tabs do not have a window, but the window is required for the
-@@ -199,10 +153,11 @@ void Issue779TraceAnnounce() {
+@@ -199,10 +153,11 @@ void RenderWidgetHostNSViewBridge::SetBounds(const gfx::Rect& rect) {
      // The position of |rect| is screen coordinate system and we have to
      // consider Cocoa coordinate system is upside-down and also multi-screen.
      NSRect frame = gfx::ScreenRectToNSRect(rect);
@@ -1076,7 +1076,7 @@ index 1dce73e879b4b..56ea568948320 100644
    } else {
      BaseView* superview = static_cast<BaseView*>(cocoa_view_.superview);
      gfx::Rect rect2 = [superview flipNSRectToRect:cocoa_view_.frame];
-@@ -214,14 +169,16 @@ void Issue779TraceAnnounce() {
+@@ -214,14 +169,16 @@ void RenderWidgetHostNSViewBridge::SetBounds(const gfx::Rect& rect) {
  
  void RenderWidgetHostNSViewBridge::SetCALayerParams(
      const gfx::CALayerParams& ca_layer_params) {
@@ -1095,7 +1095,7 @@ index 1dce73e879b4b..56ea568948320 100644
    ScopedCAActionDisabler disabler;
    background_layer_.backgroundColor =
        skia::CGColorCreateFromSkColor(color).get();
-@@ -260,8 +217,9 @@ void Issue779TraceAnnounce() {
+@@ -260,8 +217,9 @@ void RenderWidgetHostNSViewBridge::SetTooltipText(
    // string, as then the comparison above will always fail and we'll try to
    // set it again every single time the mouse moves.
    std::u16string display_text = tooltip_text_;
@@ -1106,7 +1106,7 @@ index 1dce73e879b4b..56ea568948320 100644
  
    NSString* tooltip_nsstring = base::SysUTF16ToNSString(display_text);
    [cocoa_view_ setToolTipAtMousePoint:tooltip_nsstring];
-@@ -357,8 +315,9 @@ void Issue779TraceAnnounce() {
+@@ -357,8 +315,9 @@ void RenderWidgetHostNSViewBridge::LockKeyboard(
    std::optional<base::flat_set<ui::DomCode>> dom_codes;
    if (uint_dom_codes) {
      dom_codes.emplace();
@@ -1117,7 +1117,7 @@ index 1dce73e879b4b..56ea568948320 100644
    }
    [cocoa_view_ lockKeyboard:std::move(dom_codes)];
  }
-@@ -418,8 +377,9 @@ void Issue779TraceAnnounce() {
+@@ -418,8 +377,9 @@ void RenderWidgetHostNSViewBridge::OnSharingServiceInvoked(
  }
  
  void RenderWidgetHostNSViewBridge::Destroy() {
@@ -1128,7 +1128,7 @@ index 1dce73e879b4b..56ea568948320 100644
  }
  
  void RenderWidgetHostNSViewBridge::GestureScrollEventAck(
-@@ -487,63 +447,6 @@ void Hide() override {
+@@ -487,63 +447,6 @@ void RenderWidgetHostNSViewBridge::DisplayPopupMenu(
    // `NativeWidgetMacNSWindow`, so this doesn't use a strict cast.
    NativeWidgetMacNSWindow* ns_window =
        base::apple::ObjCCast<NativeWidgetMacNSWindow>(cocoa_view_.window);
@@ -1193,7 +1193,7 @@ index 1dce73e879b4b..56ea568948320 100644
      std::move(callback).Run(std::nullopt);
      return;
 diff --git a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-index 32a5d074714b5..841e0d25e4ac1 100644
+index 32a5d07471..841e0d25e4 100644
 --- a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
 +++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
 @@ -9,7 +9,6 @@
@@ -1204,7 +1204,7 @@ index 32a5d074714b5..841e0d25e4ac1 100644
  #include <optional>
  #include <string>
  
-@@ -23,170 +22,6 @@
+@@ -23,170 +22,6 @@ namespace {
  // A key to attach a MenuWasRunCallbackHolder to the NSView*.
  static const char kMenuWasRunCallbackKey = 0;
  
@@ -1375,7 +1375,7 @@ index 32a5d074714b5..841e0d25e4ac1 100644
  }  // namespace
  
  @interface MenuWasRunCallbackHolder : NSObject
-@@ -307,66 +142,6 @@ - (void)menuItemSelected:(id)sender {
+@@ -307,66 +142,6 @@ void Issue779TraceShellWindowState(NSString* boundary,
  - (void)runMenuInView:(NSView*)view
             withBounds:(NSRect)bounds
           initialIndex:(int)index {
@@ -1442,7 +1442,7 @@ index 32a5d074714b5..841e0d25e4ac1 100644
    // In a testing situation, make the callback and early-exit.
    MenuWasRunCallbackHolder* holder =
        objc_getAssociatedObject(view, &kMenuWasRunCallbackKey);
-@@ -422,144 +197,17 @@ - (void)runMenuInView:(NSView*)view
+@@ -422,144 +197,17 @@ void Issue779TraceShellWindowState(NSString* boundary,
    NSView* fakeControlView = [[NSView alloc] initWithFrame:bounds];
    [view addSubview:fakeControlView];
    NSPoint directMenuLocation = NSMakePoint(0, NSHeight(fakeControlView.bounds));
@@ -1588,7 +1588,7 @@ index 32a5d074714b5..841e0d25e4ac1 100644
  
    // Starting with macOS 14, menus were reimplemented with Cocoa (rather than
 diff --git a/content/browser/date_time_chooser/date_time_chooser.cc b/content/browser/date_time_chooser/date_time_chooser.cc
-index af4fef9306f18..2ee9cccf769e2 100644
+index af4fef9306..2ee9cccf76 100644
 --- a/content/browser/date_time_chooser/date_time_chooser.cc
 +++ b/content/browser/date_time_chooser/date_time_chooser.cc
 @@ -4,7 +4,6 @@
@@ -1644,7 +1644,7 @@ index af4fef9306f18..2ee9cccf769e2 100644
  }
  
 diff --git a/content/browser/renderer_host/popup_menu_helper_mac.mm b/content/browser/renderer_host/popup_menu_helper_mac.mm
-index 97c40b6cd6cb9..4bf4627cb2060 100644
+index 97c40b6cd6..4bf4627cb2 100644
 --- a/content/browser/renderer_host/popup_menu_helper_mac.mm
 +++ b/content/browser/renderer_host/popup_menu_helper_mac.mm
 @@ -4,8 +4,6 @@
@@ -1656,7 +1656,7 @@ index 97c40b6cd6cb9..4bf4627cb2060 100644
  #include "base/logging.h"
  #include "base/numerics/safe_conversions.h"
  #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
-@@ -25,20 +23,6 @@
+@@ -25,20 +23,6 @@ namespace {
  
  bool g_allow_showing_popup_menus = true;
  
@@ -1677,7 +1677,7 @@ index 97c40b6cd6cb9..4bf4627cb2060 100644
  }  // namespace
  
  PopupMenuHelper::PopupMenuHelper(
-@@ -70,8 +54,9 @@ void Issue779TraceAnnounce() {
+@@ -70,8 +54,9 @@ void PopupMenuHelper::ShowPopupMenu(
      bool allow_multiple_selection) {
    // Only single selection list boxes show a popup on Mac.
    DCHECK(!allow_multiple_selection);
@@ -1688,7 +1688,7 @@ index 97c40b6cd6cb9..4bf4627cb2060 100644
  
    RenderWidgetHostViewMac* rwhvm = GetRenderWidgetHostView();
    auto* web_contents = rwhvm->GetWebContents();
-@@ -79,26 +64,6 @@ void Issue779TraceAnnounce() {
+@@ -79,26 +64,6 @@ void PopupMenuHelper::ShowPopupMenu(
    // Convert element_bounds to be in screen.
    gfx::Rect client_area = web_contents->GetContainerBounds();
    gfx::Rect bounds_in_screen = bounds + client_area.OffsetFromOrigin();
@@ -1715,7 +1715,7 @@ index 97c40b6cd6cb9..4bf4627cb2060 100644
  
    // The new popup menu would overlap the permission prompt, which could lead to
    // users making decisions based on incorrect information. We should close the
-@@ -139,8 +104,9 @@ void Issue779TraceAnnounce() {
+@@ -139,8 +104,9 @@ RenderWidgetHostViewMac* PopupMenuHelper::GetRenderWidgetHostView() const {
  void PopupMenuHelper::RenderWidgetHostVisibilityChanged(
      RenderWidgetHost* widget_host,
      bool became_visible) {
@@ -1727,7 +1727,7 @@ index 97c40b6cd6cb9..4bf4627cb2060 100644
  
  void PopupMenuHelper::RenderWidgetHostDestroyed(RenderWidgetHost* widget_host) {
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index 1e57ab73eec87..3b52264cd9876 100644
+index 1e57ab73ee..3b52264cd9 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -5,7 +5,6 @@
@@ -1804,7 +1804,7 @@ index 1e57ab73eec87..3b52264cd9876 100644
    // we are sure this isn't hit.
    DCHECK(!IsInBackForwardCache());  // A page in the BackForwardCache is fully
 diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
-index 64078047c1a5c..600c0375fb096 100644
+index 64078047c1..600c0375fb 100644
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
 @@ -7,7 +7,6 @@
@@ -1815,7 +1815,7 @@ index 64078047c1a5c..600c0375fb096 100644
  #include <limits>
  #include <memory>
  #include <optional>
-@@ -117,87 +116,6 @@
+@@ -117,87 +116,6 @@ enum class GetCachedFirstRectResult {
  };
  // LINT.ThenChange(//tools/metrics/histograms/metadata/input/enums.xml:GetCachedFirstRectResult)
  
@@ -1903,7 +1903,7 @@ index 64078047c1a5c..600c0375fb096 100644
  }  // namespace
  
  ////////////////////////////////////////////////////////////////////////////////
-@@ -546,37 +464,6 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -546,37 +464,6 @@ void RenderWidgetHostViewMac::InitAsPopup(
  
    auto* parent_mac_view =
        static_cast<RenderWidgetHostViewMac*>(parent_host_view);
@@ -1941,7 +1941,7 @@ index 64078047c1a5c..600c0375fb096 100644
  
    popup_parent_host_view_ = parent_mac_view;
  
-@@ -601,24 +488,6 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -601,24 +488,6 @@ void RenderWidgetHostViewMac::InitAsPopup(
  
    // This path is used by the time/date picker.
    ns_view_->InitAsPopup(pos, popup_parent_host_view_->ns_view_id_);
@@ -1966,7 +1966,7 @@ index 64078047c1a5c..600c0375fb096 100644
    Show();
  }
  
-@@ -763,15 +632,7 @@ void Issue779TraceWebviewBounds(const char* event,
+@@ -763,15 +632,7 @@ void RenderWidgetHostViewMac::SetSize(const gfx::Size& size) {
  }
  
  void RenderWidgetHostViewMac::SetBounds(const gfx::Rect& rect) {
@@ -1982,7 +1982,7 @@ index 64078047c1a5c..600c0375fb096 100644
  
    // Check if running with no associated NSWindow and force bounds change
    // propagation. This occurs while running headless and causes problems with
-@@ -2044,10 +1905,6 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2044,10 +1905,6 @@ void RenderWidgetHostViewMac::OnWindowIsKeyChanged(bool is_key) {
  void RenderWidgetHostViewMac::OnBoundsInWindowChanged(
      const gfx::Rect& view_bounds_in_window_dip,
      bool attached_to_window) {
@@ -1993,7 +1993,7 @@ index 64078047c1a5c..600c0375fb096 100644
    bool view_size_changed =
        view_bounds_in_window_dip_.size() != view_bounds_in_window_dip.size();
  
-@@ -2063,28 +1920,15 @@ void CombineTextNodesAndMakeCallback(SpeechCallback callback,
+@@ -2063,28 +1920,15 @@ void RenderWidgetHostViewMac::OnBoundsInWindowChanged(
    if (view_size_changed) {
      UpdateScreenInfo();
    }
@@ -2023,7 +2023,7 @@ index 64078047c1a5c..600c0375fb096 100644
      host()->delegate()->SendScreenRects();
    } else {
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index 46134bdc1cae3..d9db287c0e5d0 100644
+index 46134bdc1c..d9db287c0e 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
 @@ -7,9 +7,7 @@
@@ -2259,7 +2259,7 @@ index 46134bdc1cae3..d9db287c0e5d0 100644
    // Renderer-owned popup widgets wait for the renderer to request for them
    // to be shown. We signal that this condition is satisfied by calling Init().
 diff --git a/content/browser/web_contents/web_contents_view_mac.mm b/content/browser/web_contents/web_contents_view_mac.mm
-index 8ad06d505fb3e..576a98ccadae6 100644
+index 8ad06d505f..576a98ccad 100644
 --- a/content/browser/web_contents/web_contents_view_mac.mm
 +++ b/content/browser/web_contents/web_contents_view_mac.mm
 @@ -9,9 +9,7 @@
@@ -2280,7 +2280,7 @@ index 8ad06d505fb3e..576a98ccadae6 100644
  #include "base/task/current_thread.h"
  #include "base/task/thread_pool.h"
  #include "base/threading/thread_restrictions.h"
-@@ -67,155 +64,6 @@
+@@ -67,155 +64,6 @@ STATIC_ASSERT_ENUM(NSDragOperationEvery, blink::kDragOperationEvery);
  namespace content {
  namespace {
  
@@ -2436,7 +2436,7 @@ index 8ad06d505fb3e..576a98ccadae6 100644
  // This helper's sole task is to write out data for a promised file; the caller
  // is responsible for opening the file. It takes the drop data and an open file
  // stream.
-@@ -550,66 +398,8 @@ ClipboardEndpoint source_endpoint(
+@@ -550,66 +398,8 @@ void WebContentsViewMac::ShowPopupMenu(
      std::vector<blink::mojom::MenuItemPtr> menu_items,
      bool right_aligned,
      bool allow_multiple_selection) {
@@ -2503,7 +2503,7 @@ index 8ad06d505fb3e..576a98ccadae6 100644
    popup_menu_helper_->ShowPopupMenu(bounds, item_font_size, selected_item,
                                      std::move(menu_items), right_aligned,
                                      allow_multiple_selection);
-@@ -620,46 +410,8 @@ ClipboardEndpoint source_endpoint(
+@@ -620,46 +410,8 @@ void WebContentsViewMac::ShowPopupMenu(
  void WebContentsViewMac::OnMenuClosed() {
    NSView* view = GetInProcessNSView();
    [view.window setIgnoresMouseEvents:YES];
@@ -2551,7 +2551,7 @@ index 8ad06d505fb3e..576a98ccadae6 100644
  
  gfx::Rect WebContentsViewMac::GetViewBounds() const {
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index f45f6300718e9..7c15be0e1192d 100644
+index f45f630071..7c15be0e11 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -4,8 +4,8 @@
@@ -3414,7 +3414,7 @@ index f45f6300718e9..7c15be0e1192d 100644
    return nullptr;
  }
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.h b/content/libtermsurf_chromium/ts_shell_window_mac.h
-index e38402016615a..9b7d1b6560c39 100644
+index e384020166..9b7d1b6560 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.h
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.h
 @@ -11,8 +11,6 @@ namespace content {
@@ -3427,7 +3427,7 @@ index e38402016615a..9b7d1b6560c39 100644
  
  void MoveShellWindowToTermSurfScreenRect(Shell* shell,
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.mm b/content/libtermsurf_chromium/ts_shell_window_mac.mm
-index bcd0717aee802..fce3033204511 100644
+index bcd0717aee..fce3033204 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.mm
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.mm
 @@ -8,11 +8,8 @@
@@ -3724,7 +3724,7 @@ index bcd0717aee802..fce3033204511 100644
  
  }  // namespace content
 diff --git a/content/shell/browser/shell_platform_delegate_mac.mm b/content/shell/browser/shell_platform_delegate_mac.mm
-index fd4b3be9dc288..ff3d7499ebc4d 100644
+index fd4b3be9dc..ff3d7499eb 100644
 --- a/content/shell/browser/shell_platform_delegate_mac.mm
 +++ b/content/shell/browser/shell_platform_delegate_mac.mm
 @@ -7,12 +7,10 @@
@@ -3815,7 +3815,7 @@ index fd4b3be9dc288..ff3d7499ebc4d 100644
  }  // namespace
  
  namespace content {
-@@ -282,14 +213,11 @@ void Issue779LogShellWindowFrame(const char* event,
+@@ -282,14 +213,11 @@ void ShellPlatformDelegate::CreatePlatformWindow(
      // stays active and CAContext survives navigation.
      [window setAlphaValue:0.0];
      [window orderWindow:NSWindowBelow relativeTo:0];
@@ -3830,7 +3830,7 @@ index fd4b3be9dc288..ff3d7499ebc4d 100644
  }
  
  gfx::NativeWindow ShellPlatformDelegate::GetNativeWindow(Shell* shell) {
-@@ -320,7 +248,6 @@ void Issue779LogShellWindowFrame(const char* event,
+@@ -320,7 +248,6 @@ void ShellPlatformDelegate::SetContents(Shell* shell) {
    }
    web_view.frame = frame;
    web_view.needsDisplay = YES;
@@ -3838,7 +3838,7 @@ index fd4b3be9dc288..ff3d7499ebc4d 100644
  }
  
  void ShellPlatformDelegate::ResizeWebContent(Shell* shell,
-@@ -332,8 +259,6 @@ void Issue779LogShellWindowFrame(const char* event,
+@@ -332,8 +259,6 @@ void ShellPlatformDelegate::ResizeWebContent(Shell* shell,
    NSRect frame = NSMakeRect(0, 0, content_size.width(),
                              content_size.height() + toolbar_height);
    shell_data.delegate.window.contentView.frame = frame;
@@ -3848,7 +3848,7 @@ index fd4b3be9dc288..ff3d7499ebc4d 100644
  
  void ShellPlatformDelegate::EnableUIControl(Shell* shell,
 diff --git a/content/shell/renderer/shell_content_renderer_client.cc b/content/shell/renderer/shell_content_renderer_client.cc
-index 26d4143b5b328..0c02fa5455653 100644
+index 26d4143b5b..0c02fa5455 100644
 --- a/content/shell/renderer/shell_content_renderer_client.cc
 +++ b/content/shell/renderer/shell_content_renderer_client.cc
 @@ -4,7 +4,6 @@
@@ -3942,7 +3942,7 @@ index 26d4143b5b328..0c02fa5455653 100644
    return nullptr;
  }
 diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
-index 66b87f473e662..a06ff23ce5bb2 100644
+index 66b87f473e..a06ff23ce5 100644
 --- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 @@ -490,18 +490,6 @@ WebPagePopupImpl::~WebPagePopupImpl() {
@@ -4148,7 +4148,7 @@ index 66b87f473e662..a06ff23ce5bb2 100644
      popup_client_->CancelPopup();
    }
 diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
-index c699ab65584fb..df1fdcba37090 100644
+index c699ab6558..df1fdcba37 100644
 --- a/third_party/blink/renderer/core/exported/web_view_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
 @@ -30,7 +30,6 @@
@@ -5329,7 +5329,7 @@ index c699ab65584fb..df1fdcba37090 100644
    WebRemoteFrameImpl::CreateMainFrame(
        this, frame_token, is_loading, devtools_frame_token, opener,
 diff --git a/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc b/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
-index 077986280b149..97c5ee90e2118 100644
+index 077986280b..97c5ee90e2 100644
 --- a/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
 +++ b/third_party/blink/renderer/core/html/forms/date_time_chooser_impl.cc
 @@ -30,8 +30,6 @@
@@ -5475,7 +5475,7 @@ index 077986280b149..97c5ee90e2118 100644
    client_->DidEndChooser();
  }
 diff --git a/third_party/blink/renderer/core/page/chrome_client_impl.cc b/third_party/blink/renderer/core/page/chrome_client_impl.cc
-index 2c75aadfe53d1..f0b77c8cf2217 100644
+index 2c75aadfe5..f0b77c8cf2 100644
 --- a/third_party/blink/renderer/core/page/chrome_client_impl.cc
 +++ b/third_party/blink/renderer/core/page/chrome_client_impl.cc
 @@ -31,7 +31,6 @@
@@ -5908,5 +5908,5 @@ index 2c75aadfe53d1..f0b77c8cf2217 100644
  
  void ChromeClientImpl::PasswordFieldReset(HTMLInputElement& element) {
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

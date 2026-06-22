@@ -1,7 +1,7 @@
-From b9dd932ab3c869886d2d89598a0eec32956f6f20 Mon Sep 17 00:00:00 2001
+From 7845d7cc1c3915f70545cd183d33a1978c049c8a Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 15:31:56 -0500
-Subject: [PATCH 42/73] Trace PDF wrapper parsing
+Subject: [PATCH 42/76] Trace PDF wrapper parsing
 
 The wrapper knocked in HTML shoes,
 But parser crumbs gave scanty clues.
@@ -15,7 +15,7 @@ Till shadow roots can hide no more.
  4 files changed, 393 insertions(+), 137 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/dom/document_init.cc b/third_party/blink/renderer/core/dom/document_init.cc
-index 0584f638eb49c..16bfbbe901945 100644
+index 0584f638eb..16bfbbe901 100644
 --- a/third_party/blink/renderer/core/dom/document_init.cc
 +++ b/third_party/blink/renderer/core/dom/document_init.cc
 @@ -29,6 +29,7 @@
@@ -128,7 +128,7 @@ index 0584f638eb49c..16bfbbe901945 100644
  }
  
 diff --git a/third_party/blink/renderer/core/html/html_frame_owner_element.cc b/third_party/blink/renderer/core/html/html_frame_owner_element.cc
-index 7d6d8bf996a66..ba7f79646d2fb 100644
+index 7d6d8bf996..ba7f79646d 100644
 --- a/third_party/blink/renderer/core/html/html_frame_owner_element.cc
 +++ b/third_party/blink/renderer/core/html/html_frame_owner_element.cc
 @@ -21,6 +21,7 @@
@@ -574,7 +574,7 @@ index 7d6d8bf996a66..ba7f79646d2fb 100644
  }
  
 diff --git a/third_party/blink/renderer/core/html/parser/html_construction_site.cc b/third_party/blink/renderer/core/html/parser/html_construction_site.cc
-index ddd2146bc3799..defba709bc45a 100644
+index ddd2146bc3..defba709bc 100644
 --- a/third_party/blink/renderer/core/html/parser/html_construction_site.cc
 +++ b/third_party/blink/renderer/core/html/parser/html_construction_site.cc
 @@ -30,6 +30,7 @@
@@ -907,7 +907,7 @@ index ddd2146bc3799..defba709bc45a 100644
  
  bool HTMLConstructionSite::InQuirksMode() {
 diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
-index b98cf42ff36bb..f35fe840c0555 100644
+index b98cf42ff3..f35fe840c0 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.cc
 +++ b/third_party/blink/renderer/core/loader/document_loader.cc
 @@ -40,6 +40,7 @@
@@ -1576,5 +1576,5 @@ index b98cf42ff36bb..f35fe840c0555 100644
    frame_->GetBrowserInterfaceBroker().GetInterface(
        pending_code_cache_host.InitWithNewPipeAndPassReceiver());
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

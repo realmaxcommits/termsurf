@@ -1,14 +1,14 @@
-From 878fed10ace4117e90e5471552d8beb343815cae Mon Sep 17 00:00:00 2001
+From 499fe3f298d2b93c707dfb54c08c7ff878133aca Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 09:07:58 -0500
-Subject: [PATCH 51/73] Route TermSurf keyboard input to focused widget
+Subject: [PATCH 51/76] Route TermSurf keyboard input to focused widget
 
 ---
  .../ts_browser_main_parts.cc                  | 131 +++++++++++++++++-
  1 file changed, 124 insertions(+), 7 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 7d74321e1fb71..c6bee9b8892c9 100644
+index 7d74321e1f..c6bee9b889 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -129,6 +129,63 @@ void LogIssue794InputFrames(const char* tag,
@@ -186,5 +186,5 @@ index 7d74321e1fb71..c6bee9b8892c9 100644
      view->Focus();
      view->SetActive(true);
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

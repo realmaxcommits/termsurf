@@ -1,7 +1,7 @@
-From 445a4d44d9e57662a095326e8ae3dcd4aa530cc7 Mon Sep 17 00:00:00 2001
+From 9123988277172fa062aabdda29062578671b5421 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Tue, 17 Mar 2026 05:11:15 -0500
-Subject: [PATCH 04/73] Add UpdateTargetURL for link hover
+Subject: [PATCH 04/76] Add UpdateTargetURL for link hover
 
 The mouse hovered, the link was shy,
 No URL whispered where it might fly.
@@ -18,7 +18,7 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
  5 files changed, 28 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.cc b/content/libtermsurf_chromium/libtermsurf_chromium.cc
-index 6fb382cadcac7..04fece6d0a380 100644
+index 6fb382cadc..04fece6d0a 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.cc
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 @@ -47,6 +47,10 @@ void* g_on_title_changed_data = nullptr;
@@ -56,7 +56,7 @@ index 6fb382cadcac7..04fece6d0a380 100644
 +  g_on_target_url_changed_data = user_data;
 +}
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.h b/content/libtermsurf_chromium/libtermsurf_chromium.h
-index b1fcfc118b9ec..cfb790f7d49d9 100644
+index b1fcfc118b..cfb790f7d4 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.h
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.h
 @@ -168,6 +168,10 @@ TS_EXPORT void ts_set_on_cursor_changed(
@@ -71,7 +71,7 @@ index b1fcfc118b9ec..cfb790f7d49d9 100644
  }
  #endif
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.h b/content/libtermsurf_chromium/ts_browser_main_parts.h
-index a0b7038c32373..f83d575a14a6a 100644
+index a0b7038c32..f83d575a14 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.h
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.h
 @@ -38,6 +38,7 @@ void TsNotifyUrlChanged(void* wc_handle, const char* url);
@@ -83,7 +83,7 @@ index a0b7038c32373..f83d575a14a6a 100644
  class TsBrowserMainParts : public ShellBrowserMainParts {
   public:
 diff --git a/content/shell/browser/shell.cc b/content/shell/browser/shell.cc
-index 651f0fe84a432..9e91ec368fafa 100644
+index 651f0fe84a..9e91ec368f 100644
 --- a/content/shell/browser/shell.cc
 +++ b/content/shell/browser/shell.cc
 @@ -6,6 +6,8 @@
@@ -107,7 +107,7 @@ index 651f0fe84a432..9e91ec368fafa 100644
      WebContents* source) {
    if (!dialog_manager_)
 diff --git a/content/shell/browser/shell.h b/content/shell/browser/shell.h
-index 210a179a50197..4edb2c4dcc054 100644
+index 210a179a50..4edb2c4dcc 100644
 --- a/content/shell/browser/shell.h
 +++ b/content/shell/browser/shell.h
 @@ -168,6 +168,7 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
@@ -119,5 +119,5 @@ index 210a179a50197..4edb2c4dcc054 100644
        WebContents* source) override;
  #if BUILDFLAG(IS_MAC)
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

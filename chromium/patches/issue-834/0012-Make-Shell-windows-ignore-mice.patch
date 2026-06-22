@@ -1,7 +1,7 @@
-From 7923c7bf8f0730387f3ac5625c40fd155430bbbf Mon Sep 17 00:00:00 2001
+From 46760d21d475b3cb0753202687ebed1f2ab3cffe Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 22 May 2026 07:41:15 -0500
-Subject: [PATCH 12/73] Make Shell windows ignore mice
+Subject: [PATCH 12/76] Make Shell windows ignore mice
 
 The hidden Shell was far too keen,
 To catch the clicks it should not have seen.
@@ -16,10 +16,10 @@ So dropdowns cannot steal the queue.
  5 files changed, 27 insertions(+), 2 deletions(-)
 
 diff --git a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-index c9739250395a5..cc8ac6504c64e 100644
+index c973925039..cc8ac6504c 100644
 --- a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
 +++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-@@ -486,6 +486,7 @@ - (void)runMenuInView:(NSView*)view
+@@ -486,6 +486,7 @@ void Issue779TraceShellWindowState(NSString* boundary,
    }
    [cell attachPopUpWithFrame:fakeControlView.bounds inView:fakeControlView];
    [cell performClickWithFrame:fakeControlView.bounds inView:fakeControlView];
@@ -28,10 +28,10 @@ index c9739250395a5..cc8ac6504c64e 100644
    if (Issue779TraceEnabled()) {
      Issue779TraceAnnounce();
 diff --git a/content/browser/web_contents/web_contents_view_mac.mm b/content/browser/web_contents/web_contents_view_mac.mm
-index a6163efb6ee9c..4ac562ffb73dc 100644
+index a6163efb6e..4ac562ffb7 100644
 --- a/content/browser/web_contents/web_contents_view_mac.mm
 +++ b/content/browser/web_contents/web_contents_view_mac.mm
-@@ -615,9 +615,10 @@ ClipboardEndpoint source_endpoint(
+@@ -615,9 +615,10 @@ void WebContentsViewMac::ShowPopupMenu(
  #endif
  
  void WebContentsViewMac::OnMenuClosed() {
@@ -43,7 +43,7 @@ index a6163efb6ee9c..4ac562ffb73dc 100644
      Issue779TraceShellWindowState(@"select_menu", @"menu_closed_before_reset",
                                    web_contents_, view);
      LOG(INFO) << "[issue-779-trace] WebContentsViewMac::OnMenuClosed.before"
-@@ -643,9 +644,9 @@ ClipboardEndpoint source_endpoint(
+@@ -643,9 +644,9 @@ void WebContentsViewMac::OnMenuClosed() {
                << " currentEvent=" << Issue779CurrentEventType();
    }
    popup_menu_helper_.reset();
@@ -55,7 +55,7 @@ index a6163efb6ee9c..4ac562ffb73dc 100644
                                    web_contents_, view);
      LOG(INFO) << "[issue-779-trace] WebContentsViewMac::OnMenuClosed.after"
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 74672f6a98732..5326dd14f20e9 100644
+index 74672f6a98..5326dd14f2 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -100,6 +100,10 @@ void* TsBrowserMainParts::CreateTab(void* ctx, const char* url,
@@ -81,7 +81,7 @@ index 74672f6a98732..5326dd14f20e9 100644
      RenderWidgetHostView* view =
          shell->web_contents()->GetRenderWidgetHostView();
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.h b/content/libtermsurf_chromium/ts_shell_window_mac.h
-index 4d6d4df0adefe..9b7d1b6560c39 100644
+index 4d6d4df0ad..9b7d1b6560 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.h
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.h
 @@ -11,6 +11,8 @@ namespace content {
@@ -94,7 +94,7 @@ index 4d6d4df0adefe..9b7d1b6560c39 100644
                                           double screen_x,
                                           double screen_y,
 diff --git a/content/libtermsurf_chromium/ts_shell_window_mac.mm b/content/libtermsurf_chromium/ts_shell_window_mac.mm
-index 93ac878f0b429..e7274e97d7ea4 100644
+index 93ac878f0b..e7274e97d7 100644
 --- a/content/libtermsurf_chromium/ts_shell_window_mac.mm
 +++ b/content/libtermsurf_chromium/ts_shell_window_mac.mm
 @@ -62,6 +62,17 @@ NSRect PrimaryScreenFrame() {
@@ -132,5 +132,5 @@ index 93ac878f0b429..e7274e97d7ea4 100644
    if (Issue779TraceEnabled()) {
      LOG(INFO) << "[issue-779-trace] content_shell_window"
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

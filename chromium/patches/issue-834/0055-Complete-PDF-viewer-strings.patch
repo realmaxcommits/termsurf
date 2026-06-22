@@ -1,7 +1,7 @@
-From c117909804bb862a874d6f454f8539452ed7ad27 Mon Sep 17 00:00:00 2001
+From 0d37f9375fddacd6b0672e9998bff6f5e496f268 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 12:28:33 -0500
-Subject: [PATCH 55/73] Complete PDF viewer strings
+Subject: [PATCH 55/76] Complete PDF viewer strings
 
 ---
  ...ts_component_extension_resource_manager.cc | 192 +++++++++++++++++-
@@ -9,7 +9,7 @@ Subject: [PATCH 55/73] Complete PDF viewer strings
  2 files changed, 334 insertions(+), 2 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
-index 57a8dfea63124..84195d18bf8aa 100644
+index 57a8dfea63..84195d18bf 100644
 --- a/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_component_extension_resource_manager.cc
 @@ -4,9 +4,17 @@
@@ -235,7 +235,7 @@ index 57a8dfea63124..84195d18bf8aa 100644
  }
  
 diff --git a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
-index 45f5cada20be8..ae707f682d0a7 100644
+index 45f5cada20..ae707f682d 100644
 --- a/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_resources_private_api.cc
 @@ -13,6 +13,7 @@
@@ -423,5 +423,5 @@ index 45f5cada20be8..ae707f682d0a7 100644
    // Keep the PDF viewer's feature flags explicit and conservative. These match
    // the embedder-owned surfaces TermSurf currently supports.
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

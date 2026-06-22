@@ -1,7 +1,7 @@
-From 7538ea05fee1f32ff7871875b374f9674a28a92e Mon Sep 17 00:00:00 2001
+From 01aaddd77ad674a891080cea8771f2b6124b2f3b Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 09:45:44 -0500
-Subject: [PATCH 53/73] Trace PDF resize reflow
+Subject: [PATCH 53/76] Trace PDF resize reflow
 
 ---
  .../ts_browser_main_parts.cc                  | 11 ++++++++
@@ -10,7 +10,7 @@ Subject: [PATCH 53/73] Trace PDF resize reflow
  3 files changed, 48 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index c6bee9b8892c9..d4669179500ae 100644
+index c6bee9b889..d466917950 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -677,6 +677,17 @@ void TsBrowserMainParts::ResizeTab(void* wc_handle,
@@ -32,7 +32,7 @@ index c6bee9b8892c9..d4669179500ae 100644
      MoveShellWindowToTermSurfScreenRect(tab->shell, screen_x, screen_y,
                                          screen_width, screen_height,
 diff --git a/pdf/pdf_view_web_plugin.cc b/pdf/pdf_view_web_plugin.cc
-index becb9b627b208..33c43b8a7810b 100644
+index becb9b627b..33c43b8a78 100644
 --- a/pdf/pdf_view_web_plugin.cc
 +++ b/pdf/pdf_view_web_plugin.cc
 @@ -753,6 +753,20 @@ void PdfViewWebPlugin::UpdateGeometry(const gfx::Rect& window_rect,
@@ -78,7 +78,7 @@ index becb9b627b208..33c43b8a7810b 100644
      PrepareAndSetAccessibilityViewportInfo();
    }
 diff --git a/pdf/pdfium/pdfium_engine.cc b/pdf/pdfium/pdfium_engine.cc
-index 44f022eaeaf73..b2a90cc2ad0e3 100644
+index 44f022eaea..b2a90cc2ad 100644
 --- a/pdf/pdfium/pdfium_engine.cc
 +++ b/pdf/pdfium/pdfium_engine.cc
 @@ -776,10 +776,19 @@ void PDFiumEngine::PageOffsetUpdated(const gfx::Vector2d& page_offset) {
@@ -102,5 +102,5 @@ index 44f022eaeaf73..b2a90cc2ad0e3 100644
      caret_->OnGeometryChanged();
    }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

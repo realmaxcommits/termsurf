@@ -1,7 +1,7 @@
-From 79fda5873a6ff9bfd67dea1bc2527c9cf99d3d31 Mon Sep 17 00:00:00 2001
+From 59fd307d5fe8ff842d307c0396efb887aedb6672 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 11:10:26 -0500
-Subject: [PATCH 29/73] Expose PDF API surface
+Subject: [PATCH 29/76] Expose PDF API surface
 
 Two private keys stayed on the ring,
 Chrome's common map began to sing.
@@ -16,7 +16,7 @@ The renderer never asked the show.
  5 files changed, 108 insertions(+), 27 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index ae6ed04f9a668..05f2646fc4a6b 100644
+index ae6ed04f9a..05f2646fc4 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -60,6 +60,9 @@ shared_library("libtermsurf_chromium") {
@@ -30,7 +30,7 @@ index ae6ed04f9a668..05f2646fc4a6b 100644
      "//components/keyed_service/content",
      "//components/keyed_service/core",
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
-index 63606adf57ee2..fe767224b2b73 100644
+index 63606adf57..fe767224b2 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_api_provider.cc
 @@ -4,7 +4,31 @@
@@ -86,7 +86,7 @@ index 63606adf57ee2..fe767224b2b73 100644
  }
  
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
-index f977413a1e533..789c4e76e5eb5 100644
+index f977413a1e..789c4e76e5 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 @@ -6,6 +6,7 @@
@@ -108,7 +108,7 @@ index f977413a1e533..789c4e76e5eb5 100644
  
  TsExtensionsClient::~TsExtensionsClient() = default;
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
-index e53142be57c46..f5ca15c500952 100644
+index e53142be57..f5ca15c500 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 @@ -55,6 +55,16 @@ constexpr char kPdfManifestFallback[] = R"({
@@ -205,7 +205,7 @@ index e53142be57c46..f5ca15c500952 100644
              << browser_context << " enabled="
              << registry->enabled_extensions().Contains(
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
-index c48517a134232..407acf36816d6 100644
+index c48517a134..407acf3681 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 @@ -13,6 +13,7 @@
@@ -283,5 +283,5 @@ index c48517a134232..407acf36816d6 100644
  
  }  // namespace content
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

@@ -1,7 +1,7 @@
-From e05792213f8e71ae360f793d77c33afcaf7b523e Mon Sep 17 00:00:00 2001
+From 545f8fdc995cd978b391d5e06317b2eef5791b96 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 09:48:49 -0500
-Subject: [PATCH 26/73] Serve PDF extension resources
+Subject: [PATCH 26/76] Serve PDF extension resources
 
 The viewer found a tiny gate,
 Where bundled bytes could navigate.
@@ -19,7 +19,7 @@ But index.html can get its set.
  create mode 100644 content/libtermsurf_chromium/extensions/ts_extension_resource_loader.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index a7faa5ab835a7..30fbe61295040 100644
+index a7faa5ab83..30fbe61295 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -13,6 +13,8 @@ shared_library("libtermsurf_chromium") {
@@ -33,7 +33,7 @@ index a7faa5ab835a7..30fbe61295040 100644
      "extensions/ts_extension_system_factory.cc",
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc b/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc
 new file mode 100644
-index 0000000000000..2654eb6def4ad
+index 0000000000..2654eb6def
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.cc
 @@ -0,0 +1,250 @@
@@ -289,7 +289,7 @@ index 0000000000000..2654eb6def4ad
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.h b/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.h
 new file mode 100644
-index 0000000000000..7c1414dd5c02e
+index 0000000000..7c1414dd5c
 --- /dev/null
 +++ b/content/libtermsurf_chromium/extensions/ts_extension_resource_loader.h
 @@ -0,0 +1,34 @@
@@ -328,7 +328,7 @@ index 0000000000000..7c1414dd5c02e
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_EXTENSIONS_TS_EXTENSION_RESOURCE_LOADER_H_
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
-index bf9f7e8ffeb52..64da0db784fc9 100644
+index bf9f7e8ffe..64da0db784 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 @@ -12,6 +12,7 @@
@@ -403,7 +403,7 @@ index bf9f7e8ffeb52..64da0db784fc9 100644
    if (extensions::url_request_util::AllowCrossRendererResourceLoad(
            request, destination, page_transition, child_id, is_incognito,
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 0749a023e2d2e..48c4f6516f270 100644
+index 0749a023e2..48c4f6516f 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -4,13 +4,17 @@
@@ -490,7 +490,7 @@ index 0749a023e2d2e..48c4f6516f270 100644
      BrowserContext* context,
      network::mojom::NetworkContextParams* context_params,
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
-index b671edda23858..4fe55e0f32653 100644
+index b671edda23..4fe55e0f32 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.h
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -6,9 +6,13 @@
@@ -537,5 +537,5 @@ index b671edda23858..4fe55e0f32653 100644
   protected:
    void ConfigureNetworkContextParamsForShell(
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

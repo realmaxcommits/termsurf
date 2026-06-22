@@ -1,7 +1,7 @@
-From 1277ba9cabd4408a944825ca6d61145fa941d04c Mon Sep 17 00:00:00 2001
+From f52885bef33e8ce1c2ad45360f40943d1af208f0 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 18:16:51 -0500
-Subject: [PATCH 48/73] Restore PDF embedder CSS
+Subject: [PATCH 48/76] Restore PDF embedder CSS
 
 A frame was small and shy,
 Its stylesheet locked outside.
@@ -12,7 +12,7 @@ And pages grew full-wide.
  1 file changed, 2 insertions(+), 5 deletions(-)
 
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
-index 642482f3b351c..3f7b998d83590 100644
+index 642482f3b3..3f7b998d83 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_component_extension.cc
 @@ -102,11 +102,8 @@ std::optional<base::DictValue> LoadPdfManifest(
@@ -30,5 +30,5 @@ index 642482f3b351c..3f7b998d83590 100644
              << std::size(kPdfResources) << " manifest_parsed=1";
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

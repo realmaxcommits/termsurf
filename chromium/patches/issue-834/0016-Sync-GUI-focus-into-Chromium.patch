@@ -1,7 +1,7 @@
-From e9d20daea1bf79aed99822b54ce87b6c41d7a6ea Mon Sep 17 00:00:00 2001
+From de4cdb11d3c7a08de126fe35b03015f5526249fa Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 06:50:33 -0500
-Subject: [PATCH 16/73] Sync GUI focus into Chromium
+Subject: [PATCH 16/76] Sync GUI focus into Chromium
 
 When Wezboard steps out of sight,
 The popups bow and quit the light.
@@ -15,7 +15,7 @@ The page remembers where it's been.
  4 files changed, 41 insertions(+), 1 deletion(-)
 
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.cc b/content/libtermsurf_chromium/libtermsurf_chromium.cc
-index a5167e40812b2..bbdeaae1b380a 100644
+index a5167e4081..bbdeaae1b3 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.cc
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.cc
 @@ -217,6 +217,11 @@ void ts_set_focus(ts_web_contents_t wc, bool focused) {
@@ -31,7 +31,7 @@ index a5167e40812b2..bbdeaae1b380a 100644
    if (!g_main_parts) return;
    g_main_parts->SetColorScheme(wc, dark);
 diff --git a/content/libtermsurf_chromium/libtermsurf_chromium.h b/content/libtermsurf_chromium/libtermsurf_chromium.h
-index 884bee64652af..66d3add2dd550 100644
+index 884bee6465..66d3add2dd 100644
 --- a/content/libtermsurf_chromium/libtermsurf_chromium.h
 +++ b/content/libtermsurf_chromium/libtermsurf_chromium.h
 @@ -129,6 +129,9 @@ TS_EXPORT void ts_forward_key_event(ts_web_contents_t wc,
@@ -45,7 +45,7 @@ index 884bee64652af..66d3add2dd550 100644
  TS_EXPORT void ts_set_view_size(ts_web_contents_t wc,
                                  int width,
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index 50db87c66242a..f45f6300718e9 100644
+index 50db87c662..f45f630071 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -13,10 +13,12 @@
@@ -107,7 +107,7 @@ index 50db87c66242a..f45f6300718e9 100644
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    TabState* tab = FindTab(wc_handle);
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.h b/content/libtermsurf_chromium/ts_browser_main_parts.h
-index 9496b86dcb1e1..17c5448a05d71 100644
+index 9496b86dcb..17c5448a05 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.h
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.h
 @@ -74,6 +74,7 @@ class TsBrowserMainParts : public ShellBrowserMainParts {
@@ -119,5 +119,5 @@ index 9496b86dcb1e1..17c5448a05d71 100644
  
    // Returns the stored color scheme for the tab owning |web_contents|,
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

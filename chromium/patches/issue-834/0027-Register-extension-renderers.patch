@@ -1,7 +1,7 @@
-From 13b6ef911da27950b9a6352f93e9e961f42a2d1d Mon Sep 17 00:00:00 2001
+From 6f6639776e09beb408fdca116f9fcfda2547711d Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 10:18:29 -0500
-Subject: [PATCH 27/73] Register extension renderers
+Subject: [PATCH 27/76] Register extension renderers
 
 The viewer knocked with chrome-extension keys,
 A nameless scheme on process seas.
@@ -20,7 +20,7 @@ And scripts come home for PDF.
  create mode 100644 content/libtermsurf_chromium/ts_content_client.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 30fbe61295040..ae6ed04f9a668 100644
+index 30fbe61295..ae6ed04f9a 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -37,6 +37,8 @@ shared_library("libtermsurf_chromium") {
@@ -33,7 +33,7 @@ index 30fbe61295040..ae6ed04f9a668 100644
      "ts_content_renderer_client.h",
      "ts_main_delegate.cc",
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 48c4f6516f270..9ec7db7563f5b 100644
+index 48c4f6516f..9ec7db7563 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -8,13 +8,18 @@
@@ -134,7 +134,7 @@ index 48c4f6516f270..9ec7db7563f5b 100644
      BrowserContext* context,
      network::mojom::NetworkContextParams* context_params,
 diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
-index 4fe55e0f32653..22b1157cd4ccd 100644
+index 4fe55e0f32..22b1157cd4 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.h
 +++ b/content/libtermsurf_chromium/ts_browser_client.h
 @@ -14,6 +14,8 @@
@@ -159,7 +159,7 @@ index 4fe55e0f32653..22b1157cd4ccd 100644
    void ConfigureNetworkContextParamsForShell(
 diff --git a/content/libtermsurf_chromium/ts_content_client.cc b/content/libtermsurf_chromium/ts_content_client.cc
 new file mode 100644
-index 0000000000000..48f05351f306a
+index 0000000000..48f05351f3
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_content_client.cc
 @@ -0,0 +1,34 @@
@@ -199,7 +199,7 @@ index 0000000000000..48f05351f306a
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_content_client.h b/content/libtermsurf_chromium/ts_content_client.h
 new file mode 100644
-index 0000000000000..9de8bc9f15d6b
+index 0000000000..9de8bc9f15
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_content_client.h
 @@ -0,0 +1,25 @@
@@ -229,7 +229,7 @@ index 0000000000000..9de8bc9f15d6b
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_CONTENT_CLIENT_H_
 diff --git a/content/libtermsurf_chromium/ts_main_delegate.cc b/content/libtermsurf_chromium/ts_main_delegate.cc
-index 9532f1e4e4125..7164afcceff3f 100644
+index 9532f1e4e4..7164afccef 100644
 --- a/content/libtermsurf_chromium/ts_main_delegate.cc
 +++ b/content/libtermsurf_chromium/ts_main_delegate.cc
 @@ -14,6 +14,7 @@
@@ -253,7 +253,7 @@ index 9532f1e4e4125..7164afcceff3f 100644
    browser_client_ = std::make_unique<TsBrowserClient>();
    return browser_client_.get();
 diff --git a/content/libtermsurf_chromium/ts_main_delegate.h b/content/libtermsurf_chromium/ts_main_delegate.h
-index e49cc03a075a1..461064b26b241 100644
+index e49cc03a07..461064b26b 100644
 --- a/content/libtermsurf_chromium/ts_main_delegate.h
 +++ b/content/libtermsurf_chromium/ts_main_delegate.h
 @@ -11,6 +11,7 @@
@@ -273,5 +273,5 @@ index e49cc03a075a1..461064b26b241 100644
    ContentBrowserClient* CreateContentBrowserClient() override;
    ContentRendererClient* CreateContentRendererClient() override;
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

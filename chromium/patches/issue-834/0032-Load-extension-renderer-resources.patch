@@ -1,7 +1,7 @@
-From 4cc7c3391ac05ad1ca48d271125b367d117a91f0 Mon Sep 17 00:00:00 2001
+From e1e62c8ccbbb07a05e5f67f792d548ce4d7ce983 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 12:00:01 -0500
-Subject: [PATCH 32/73] Load extension renderer resources
+Subject: [PATCH 32/76] Load extension renderer resources
 
 The module map had named its prize,
 But bytes were hiding from its eyes.
@@ -13,7 +13,7 @@ Now MIME asks for one gate more.
  2 files changed, 32 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 7bee1fb9a877d..d98d4913a45dc 100644
+index 7bee1fb9a8..d98d4913a4 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -80,6 +80,7 @@ shared_library("libtermsurf_chromium") {
@@ -25,7 +25,7 @@ index 7bee1fb9a877d..d98d4913a45dc 100644
      "//extensions/browser",
      "//extensions/browser/api:api_provider",
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
-index 407acf36816d6..cd5ec5b2d31b4 100644
+index 407acf3681..cd5ec5b2d3 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 @@ -15,6 +15,7 @@
@@ -74,5 +74,5 @@ index 407acf36816d6..cd5ec5b2d31b4 100644
  
  }  // namespace content
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

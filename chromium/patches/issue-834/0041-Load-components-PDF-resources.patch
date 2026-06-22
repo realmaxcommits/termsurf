@@ -1,7 +1,7 @@
-From 81c1d90e04e6de8174e1d21188a1b6667c06f94b Mon Sep 17 00:00:00 2001
+From 264d6f85cd2a61c0346b98788def44b9e930f0cf Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 15:05:47 -0500
-Subject: [PATCH 41/73] Load components PDF resources
+Subject: [PATCH 41/76] Load components PDF resources
 
 The iframe recipe hid from sight,
 In components pak tucked tight.
@@ -13,7 +13,7 @@ And next we watch the child frame grow.
  2 files changed, 29 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index 77298fa3ccfa2..cd971fcc7d563 100644
+index 77298fa3cc..cd971fcc7d 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -86,6 +86,7 @@ shared_library("libtermsurf_chromium") {
@@ -25,7 +25,7 @@ index 77298fa3ccfa2..cd971fcc7d563 100644
      "//components/value_store",
      "//components/zoom",
 diff --git a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
-index cd5ec5b2d31b4..ce8a24459180a 100644
+index cd5ec5b2d3..ce8a244591 100644
 --- a/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_pdf_resource_bundle.cc
 @@ -15,6 +15,7 @@
@@ -71,5 +71,5 @@ index cd5ec5b2d31b4..ce8a24459180a 100644
        assets_path.AppendASCII("gen").AppendASCII("chrome").AppendASCII(
            "common_resources.pak");
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

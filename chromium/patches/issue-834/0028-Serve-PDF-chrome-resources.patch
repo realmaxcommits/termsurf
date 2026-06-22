@@ -1,7 +1,7 @@
-From 25aa1e2fce3bfbbb92e67b239f261746f85f1eb2 Mon Sep 17 00:00:00 2001
+From be3142add2a07d07166c83fe16f70001db05f6df Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Fri, 29 May 2026 10:45:22 -0500
-Subject: [PATCH 28/73] Serve PDF chrome resources
+Subject: [PATCH 28/76] Serve PDF chrome resources
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -18,7 +18,7 @@ Now APIs grumble next in line.
  5 files changed, 122 insertions(+)
 
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
-index 64da0db784fc9..1e018264f21af 100644
+index 64da0db784..1e018264f2 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_browser_client.cc
 @@ -8,6 +8,7 @@
@@ -30,7 +30,7 @@ index 64da0db784fc9..1e018264f21af 100644
  #include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
  #include "components/version_info/version_info.h"
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
-index 64d7202fce381..f977413a1e533 100644
+index 64d7202fce..f977413a1e 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.cc
 @@ -4,14 +4,26 @@
@@ -83,7 +83,7 @@ index 64d7202fce381..f977413a1e533 100644
 +
  }  // namespace content
 diff --git a/content/libtermsurf_chromium/extensions/ts_extensions_client.h b/content/libtermsurf_chromium/extensions/ts_extensions_client.h
-index 7f8cea3b083aa..6686d2b4f44df 100644
+index 7f8cea3b08..6686d2b4f4 100644
 --- a/content/libtermsurf_chromium/extensions/ts_extensions_client.h
 +++ b/content/libtermsurf_chromium/extensions/ts_extensions_client.h
 @@ -6,9 +6,11 @@
@@ -111,7 +111,7 @@ index 7f8cea3b083aa..6686d2b4f44df 100644
   private:
    ExtensionsClient::ScriptingAllowlist scripting_allowlist_;
 diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
-index 9ec7db7563f5b..4a2aa122d52b3 100644
+index 9ec7db7563..4a2aa122d5 100644
 --- a/content/libtermsurf_chromium/ts_browser_client.cc
 +++ b/content/libtermsurf_chromium/ts_browser_client.cc
 @@ -7,11 +7,14 @@
@@ -214,7 +214,7 @@ index 9ec7db7563f5b..4a2aa122d52b3 100644
  
  void TsBrowserClient::ConfigureNetworkContextParamsForShell(
 diff --git a/content/libtermsurf_chromium/ts_content_renderer_client.cc b/content/libtermsurf_chromium/ts_content_renderer_client.cc
-index 23bbb229d95fb..c3249abf1ecdf 100644
+index 23bbb229d9..c3249abf1e 100644
 --- a/content/libtermsurf_chromium/ts_content_renderer_client.cc
 +++ b/content/libtermsurf_chromium/ts_content_renderer_client.cc
 @@ -7,15 +7,40 @@
@@ -267,5 +267,5 @@ index 23bbb229d95fb..c3249abf1ecdf 100644
  }
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

@@ -1,7 +1,7 @@
-From 89f483da7b04e089478d7be65924d6f0bb4eeb63 Mon Sep 17 00:00:00 2001
+From 39b91ac0bf1cfcde281608280e37ae24ea3e3d06 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 23 May 2026 07:51:11 -0500
-Subject: [PATCH 18/73] Use direct NSMenu for selects
+Subject: [PATCH 18/76] Use direct NSMenu for selects
 
 The popup cell shifted left with pride,
 So menus took a straighter ride.
@@ -12,10 +12,10 @@ Just NSMenu at the control.
  1 file changed, 37 insertions(+), 24 deletions(-)
 
 diff --git a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-index 8b39c968b8358..32a5d074714b5 100644
+index 8b39c968b8..32a5d07471 100644
 --- a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
 +++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
-@@ -41,6 +41,10 @@ void Issue779TraceAnnounce() {
+@@ -41,6 +41,10 @@ std::string Issue779NSRectToString(NSRect rect) {
    return base::SysNSStringToUTF8(NSStringFromRect(rect));
  }
  
@@ -26,7 +26,7 @@ index 8b39c968b8358..32a5d074714b5 100644
  std::string Issue779TopLeftScreenRectToString(NSRect rect, NSScreen* screen) {
    if (!screen) {
      return "null";
-@@ -388,29 +392,15 @@ - (void)runMenuInView:(NSView*)view
+@@ -388,29 +392,15 @@ void Issue779TraceShellWindowState(NSString* boundary,
    // of the menu position of the reland, so be sure to not regress menu
    // positioning in that case (https://crbug.com/404294118).
  
@@ -61,7 +61,7 @@ index 8b39c968b8358..32a5d074714b5 100644
      _menu.userInterfaceLayoutDirection =
          NSUserInterfaceLayoutDirectionRightToLeft;
    }
-@@ -431,6 +421,7 @@ - (void)runMenuInView:(NSView*)view
+@@ -431,6 +421,7 @@ void Issue779TraceShellWindowState(NSString* boundary,
    // repositioned relative to that.
    NSView* fakeControlView = [[NSView alloc] initWithFrame:bounds];
    [view addSubview:fakeControlView];
@@ -69,7 +69,7 @@ index 8b39c968b8358..32a5d074714b5 100644
    if (Issue779TraceEnabled()) {
      NSRect fakeWindowBounds =
          [fakeControlView convertRect:fakeControlView.bounds toView:nil];
-@@ -463,7 +454,14 @@ - (void)runMenuInView:(NSView*)view
+@@ -463,7 +454,14 @@ void Issue779TraceShellWindowState(NSString* boundary,
                  : std::string("null"))
          << " attach_popup_frame="
          << Issue779NSRectToString(fakeControlView.bounds)
@@ -85,7 +85,7 @@ index 8b39c968b8358..32a5d074714b5 100644
          << " right_aligned=" << static_cast<bool>(_rightAligned)
          << " final_popup_top_left=unavailable-appkit-owned";
    }
-@@ -475,7 +473,12 @@ - (void)runMenuInView:(NSView*)view
+@@ -475,7 +473,12 @@ void Issue779TraceShellWindowState(NSString* boundary,
                << " control=select"
                << " boundary=appkit-open"
                << " outcome=entered"
@@ -99,7 +99,7 @@ index 8b39c968b8358..32a5d074714b5 100644
                << " runner=" << (__bridge void*)self
                << " view=" << (__bridge void*)view
                << " window=" << (__bridge void*)view.window
-@@ -492,8 +495,11 @@ - (void)runMenuInView:(NSView*)view
+@@ -492,8 +495,11 @@ void Issue779TraceShellWindowState(NSString* boundary,
                << " firstResponder=" << Issue779FirstResponder(view.window)
                << " currentEvent=" << Issue779CurrentEventType();
    }
@@ -113,7 +113,7 @@ index 8b39c968b8358..32a5d074714b5 100644
    [view.window setIgnoresMouseEvents:YES];
    Issue779TraceShellWindowState(@"select_menu", @"after_return", view, self);
    if (Issue779TraceEnabled()) {
-@@ -517,13 +523,20 @@ - (void)runMenuInView:(NSView*)view
+@@ -517,13 +523,20 @@ void Issue779TraceShellWindowState(NSString* boundary,
                << (view.window ? static_cast<bool>(view.window.isVisible)
                                : false)
                << " app_is_active=" << static_cast<bool>(NSApp.isActive)
@@ -136,5 +136,5 @@ index 8b39c968b8358..32a5d074714b5 100644
                << " view=" << (__bridge void*)view
                << " window=" << (__bridge void*)view.window
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 

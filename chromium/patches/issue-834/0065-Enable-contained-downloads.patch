@@ -1,7 +1,7 @@
-From 578efab1d4b5e922dd0d206770253a0667b4059b Mon Sep 17 00:00:00 2001
+From e50be88123ee061480e5fb942b3cb145309d19e0 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Sat, 30 May 2026 18:22:35 -0500
-Subject: [PATCH 65/73] Enable contained downloads
+Subject: [PATCH 65/76] Enable contained downloads
 
 The save path asked a native door,
 On macOS found an empty floor.
@@ -17,7 +17,7 @@ No prompt, no fuss, deterministically.
  create mode 100644 content/libtermsurf_chromium/ts_download_support.h
 
 diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
-index c09c75e08498e..432c55615caeb 100644
+index c09c75e084..432c55615c 100644
 --- a/content/libtermsurf_chromium/BUILD.gn
 +++ b/content/libtermsurf_chromium/BUILD.gn
 @@ -51,6 +51,8 @@ shared_library("libtermsurf_chromium") {
@@ -30,7 +30,7 @@ index c09c75e08498e..432c55615caeb 100644
      "ts_main_delegate.h",
      "ts_mime_handler_binders.cc",
 diff --git a/content/libtermsurf_chromium/ts_browser_main_parts.cc b/content/libtermsurf_chromium/ts_browser_main_parts.cc
-index d3aab68f92251..1566dc5347cd1 100644
+index d3aab68f92..1566dc5347 100644
 --- a/content/libtermsurf_chromium/ts_browser_main_parts.cc
 +++ b/content/libtermsurf_chromium/ts_browser_main_parts.cc
 @@ -24,6 +24,7 @@
@@ -74,7 +74,7 @@ index d3aab68f92251..1566dc5347cd1 100644
  
 diff --git a/content/libtermsurf_chromium/ts_download_support.cc b/content/libtermsurf_chromium/ts_download_support.cc
 new file mode 100644
-index 0000000000000..48693925b7d5a
+index 0000000000..48693925b7
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_download_support.cc
 @@ -0,0 +1,55 @@
@@ -135,7 +135,7 @@ index 0000000000000..48693925b7d5a
 +}  // namespace content
 diff --git a/content/libtermsurf_chromium/ts_download_support.h b/content/libtermsurf_chromium/ts_download_support.h
 new file mode 100644
-index 0000000000000..92fc35c219030
+index 0000000000..92fc35c219
 --- /dev/null
 +++ b/content/libtermsurf_chromium/ts_download_support.h
 @@ -0,0 +1,16 @@
@@ -156,5 +156,5 @@ index 0000000000000..92fc35c219030
 +
 +#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_DOWNLOAD_SUPPORT_H_
 -- 
-2.50.1 (Apple Git-155)
+2.54.0
 
