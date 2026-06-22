@@ -185,3 +185,93 @@ Fix:
 Re-review verdict: **Approved**.
 
 The reviewer found no remaining Required findings.
+
+## Result
+
+**Result:** Partial
+
+Implemented a narrow Roamium PDF print manager instead of linking Chromium's
+full Chrome browser print UI target. The broad `//chrome/browser/printing:impl`
+approach was tried first and rejected because it pulled in unrelated Chrome UI,
+enterprise, media, and duplicate PDF stream-manager dependencies, causing
+`libtermsurf_chromium.dylib` link failures.
+
+The retained implementation adds `termsurf::TsPdfPrintManager`, creates it for
+each Roamium `WebContents`, binds `printing::mojom::PrintManagerHost` for PDF
+renderer frames, and uses Chromium's exported `PrintingContext` /
+`RenderParamsFromPrintSettings()` path to produce non-null default print
+settings. The manager preserves the initialized print request by document cookie
+between `GetDefaultPrintSettings()` and `ScriptedPrint()`, matching the upstream
+lifecycle where Chromium queues the initialized `PrinterQuery` after default
+settings and consumes it during the final user-settings step.
+
+The guarded native print probe now advances past the Experiment 19 blocker:
+
+```text
+get-default-print-settings-enter
+get-default-print-settings-ok
+print-init-settings-ok
+did-show-print-dialog-enter
+did-show-print-dialog-exit
+scripted-print-enter
+scripted-print-settings-null
+```
+
+The old first failing hop, `browser-default-print-settings-null`, is gone. The
+new first failing hop is `native-print-click-sent-no-dialog`: the toolbar print
+click is sent, default print settings are valid, the renderer enters
+`ScriptedPrint()`, but no native macOS print dialog is observed and the scripted
+print settings response is null.
+
+The safety gate remained intact. The preflight dialog watcher passed before the
+production print click. The print queue was empty before and after the probe,
+and no print job was submitted.
+
+Verification evidence:
+
+- `autoninja -C out/Default libtermsurf_chromium` passed on
+  `148.0.7778.97-issue-834-exp20` after the preserved-request fix.
+- Chromium source commit: `453d826490b5134341fce36bb199c34843bd421e`.
+- The cumulative Issue 834 patch archive was regenerated from the visible
+  Chromium 148.0.7778.97 shallow base commit
+  `6b3fa66a923a9442c8ab0bc71b4b41ff24528d3b`, because this checkout does not
+  have a local `148.0.7778.97` ref.
+- `scripts/test-issue-834-pdf-native-print.py --log-dir logs/issue-834-exp20-browser-print-settings --probe native-dialog --allow-native-dialog-click`
+  completed with `probe_status = "ok"`, `safety_gate_passed = true`, and
+  `first_failing_hop = "native-print-click-sent-no-dialog"`.
+- `logs/issue-834-exp20-browser-print-settings/pdf-native-print.log` records
+  `get-default-print-settings-ok` and `scripted-print-settings-null`.
+
+## Conclusion
+
+Experiment 20 proves Roamium was missing browser-side `PrintManagerHost`
+ownership/settings support and fixes that layer. Native print is still not
+complete: the next experiment should focus specifically on why
+`PrintingContext::AskUserForSettings()` does not produce an observable macOS
+print dialog in the Roamium embedding path, despite the renderer reaching
+`scripted-print-enter`.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed result with fresh context.
+
+Initial verdict: **Changes Required**.
+
+Required finding:
+
+- `TsPdfPrintManager` returned default settings but destroyed the initialized
+  print request before `ScriptedPrint()`. Upstream Chromium preserves the
+  initialized `PrinterQuery` after default settings and pops it by cookie during
+  the final user-settings step.
+
+Fix:
+
+- Added `pending_print_requests_`, keyed by document cookie, so
+  `GetDefaultPrintSettings()` preserves the initialized request and
+  `ScriptedPrint(params->cookie)` consumes the matching request instead of
+  creating a fresh context.
+
+Re-review verdict: **Approved**.
+
+The reviewer confirmed the prior Required finding is resolved and found no new
+Required findings.
