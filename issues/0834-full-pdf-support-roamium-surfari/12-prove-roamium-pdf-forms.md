@@ -211,3 +211,120 @@ Required finding:
   mandatory.
 
 Re-review verdict: **Approved**.
+
+## Result
+
+**Result:** Partial
+
+Implemented a calibrated Roamium PDF forms harness:
+
+- `scripts/test-issue-834-pdf-forms.py` generates a deterministic AcroForm
+  fixture, launches repo-built Roamium, drives the TermSurf protocol, computes
+  field click coordinates from live PDF plugin geometry, compares screenshot
+  regions, and writes `pdf-forms-summary.json`.
+- `scripts/probe-pdf-forms.mjs` attaches through DevTools, captures PDF
+  viewer/plugin state, records plugin/page-related geometry, and writes
+  checkpoint screenshots.
+
+Verification commands:
+
+```bash
+node --check scripts/probe-pdf-forms.mjs
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/test-issue-834-pdf-forms.py
+
+python3 scripts/test-issue-834-pdf-forms.py \
+  --log-dir logs/issue-834-exp12-roamium-pdf-forms-final
+
+git diff --check
+```
+
+The final combined summary is:
+
+`logs/issue-834-exp12-roamium-pdf-forms-final/pdf-forms-summary.json`
+
+It records `first_failing_hop = "form-checkbox-state-missing"` for the aggregate
+because the two individual-control scenarios pass, but both same-document
+sequence scenarios expose focus/input order gaps.
+
+The individual-control proof is:
+
+- text field scenario:
+  - click coordinate: `x = 432.9117647058823`, `y = 122.79820261437908`;
+  - PDF field rect: `[160, 650, 380, 675]`;
+  - screen rect: `x = 379.16993464052285`, `y = 116.69117647058823`,
+    `width = 107.48366013071895`, `height = 12.2140522875817`;
+  - TermSurf/Roamium trace recorded mouse and keyboard input;
+  - localized text-field diff recorded `5112` changed pixels inside the field
+    region and `0` changed pixels outside it.
+- checkbox scenario:
+  - click coordinate: `x = 391.38398692810455`, `y = 148.44771241830065`;
+  - PDF field rect: `[160, 585, 210, 635]`;
+  - screen rect: `x = 379.16993464052285`, `y = 136.23366013071896`,
+    `width = 24.4281045751634`, `height = 24.4281045751634`;
+  - TermSurf/Roamium trace recorded mouse input;
+  - localized checkbox diff recorded `2655` changed pixels inside the checkbox
+    region and `0` changed pixels outside it.
+
+The same-document sequence evidence is:
+
+- text-then-checkbox scenario:
+  - `first_failing_hop = "form-checkbox-state-missing"`;
+  - text edit still passed with `5112` changed pixels inside the text-field
+    region and `0` changed pixels outside it;
+  - the subsequent checkbox click recorded `0` changed pixels inside the
+    checkbox region, with only `28` changed pixels outside it.
+- checkbox-then-text scenario:
+  - `first_failing_hop = "form-text-value-missing"`;
+  - checkbox toggle still passed with `2655` changed pixels inside the checkbox
+    region and `0` changed pixels outside it;
+  - the subsequent text input recorded `0` changed pixels inside the text-field
+    region, with `248` changed pixels outside it.
+
+The probe also corrected a bad assumption from Experiment 11. Experiment 11
+clicked at `x = 220` even though the live plugin rect began at `x = 301`; this
+experiment computes coordinates from the live plugin rect and the generated PDF
+field rectangles before sending input.
+
+No product source changed.
+
+The result is Partial, not Pass, because the final summary now logs a remaining
+same-document sequence gap. Text editing works when it is the first calibrated
+form interaction, and checkbox toggling works when it is the first calibrated
+form interaction. But in the same document instance, text-then-checkbox fails at
+checkbox state, while checkbox-then-text fails at text value.
+
+That sequence behavior may be a fixture limitation, a Chromium PDF form focus
+quirk, or a real TermSurf/Roamium integration gap. It is not proven enough to
+call Roamium PDF forms complete.
+
+## Completion Review
+
+Initial verdict: **Changes Required**.
+
+Required finding:
+
+- The first completion-review pass found that the Partial rationale depended on
+  same-document sequence failures that were not present in the final summary.
+  The harness now runs and records `text-then-checkbox` and `checkbox-then-text`
+  scenarios under the final summary, and the result section cites those logged
+  failures directly.
+
+Re-review verdict: **Approved**.
+
+The reviewer verified that the final summary records both same-document
+failures, that the result cites those logged failures directly, that
+`scripts/__pycache__/` is gone, and that `git diff --check` passes.
+
+## Conclusion
+
+Experiment 12 proves calibrated individual PDF form controls through the real
+TermSurf/Roamium path. It replaces the uncalibrated Experiment 11 forms evidence
+with a repeatable harness and concrete geometry/screenshot proof for a text
+field and a checkbox.
+
+The next forms experiment should focus narrowly on same-document multi-control
+interaction. It should first determine whether the sequence gap is caused by the
+hand-generated fixture, Chromium PDF form behavior, or TermSurf/Roamium focus
+and input routing.
