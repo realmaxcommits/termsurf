@@ -150,3 +150,108 @@ Final verdict: **Approved**.
 The reviewer confirmed that the prior Required finding is resolved, no new
 Required finding was introduced by the fix, and the README still links
 Experiment 27 as `Designed`.
+
+## Result
+
+**Result:** Partial
+
+The trace-only AppKit visibility probe succeeded and narrowed the failure. The
+native print sheet is not missing. After
+`beginSheetWithPrintInfo:modalForWindow:delegate:didEndSelector:contextInfo:`
+returns, AppKit has attached a visible key `NSPanel` titled `Print` to the
+Roamium parent window:
+
+- before begin, `attachedSheet present=false`;
+- after begin, `attachedSheet present=true`;
+- after begin, the attached sheet is `class=NSPanel`, `visible=true`,
+  `key=true`, `sheet=true`, and `title=Print`;
+- `NSPrintPanel` does not respond to a dynamic `window` selector in this build,
+  so there is no separate `panel.window` object to correlate;
+- delayed main-run-loop probes still see the same visible attached sheet;
+- the weak delayed references remain live, so the panel was not immediately
+  deallocated;
+- no `mac-ask-user-parent-window-sheet-response-*` callback is recorded;
+- the CoreGraphics title-based watcher does not observe a `"Print"` or
+  `"Printer"` window and therefore does not send cancel;
+- the print queue is unchanged;
+- Roamium remains alive until harness shutdown.
+
+The harness now classifies this as
+`mac-print-parent-window-sheet-visible-watcher-missed`, which is more precise
+than Experiment 26's `mac-print-parent-window-sheet-response-missing`.
+
+Verification run:
+
+```bash
+cd chromium/src
+export PATH="/Users/astrohacker/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default libtermsurf_chromium
+
+cd /Users/astrohacker/dev/termsurf
+rm -rf logs/issue-834-exp27-print-sheet-visibility
+python3 scripts/test-issue-834-pdf-native-print.py \
+  --log-dir logs/issue-834-exp27-print-sheet-visibility \
+  --probe native-dialog \
+  --allow-native-dialog-click
+
+rm -rf scripts/__pycache__
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/test-issue-834-pdf-native-print.py
+rm -rf scripts/__pycache__
+node --check scripts/probe-pdf-save-print-title-local.mjs
+git -C chromium/src diff --check
+git diff --check
+```
+
+The guarded probe returned nonzero because native print still did not reach safe
+observed cancellation. Its summary is at
+`logs/issue-834-exp27-print-sheet-visibility/pdf-native-print-summary.json`,
+with:
+
+```json
+{
+  "first_failing_hop": "mac-print-parent-window-sheet-visible-watcher-missed",
+  "safety_gate_passed": true,
+  "roamium_exited_before_shutdown": false
+}
+```
+
+The Chromium branch `148.0.7778.97-issue-834-exp27` was committed at
+`5d290a336479d86f85c2097c280911cc9d85e267`, and `chromium/patches/issue-834/`
+was regenerated through `0084-Trace-parent-print-sheet-visibility.patch`.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment and initially
+required one fix: the implementation traced the parent window's `attachedSheet`,
+but did not explicitly trace or correlate a `panel.window` lookup as required by
+the approved design.
+
+The Chromium patch was amended so `TraceMacPrintSheetVisibility` now:
+
+- records whether `NSPrintPanel` responds to a dynamic `window` selector;
+- traces `panel-window` state when that selector is available;
+- records `matches_panel_window` on correlated parent, attached-sheet, and
+  ordered-window traces.
+
+The guarded probe was rerun after the fix. It showed
+`panel-window-selector present=false` at each inspection point while still
+showing the visible key attached `NSPanel` titled `Print`.
+
+Final verdict: **Approved**.
+
+The reviewer confirmed that the prior Required finding is resolved, no new
+Required finding was introduced, the patch archive is from amended Chromium hash
+`5d290a336479d86f85c2097c280911cc9d85e267`, and the experiment document records
+the updated evidence and hash.
+
+## Conclusion
+
+Experiment 27 proves the macOS print sheet is present and visible inside
+Roamium/AppKit, but our current automation is looking in the wrong place. A
+document-modal print sheet does not appear as a separately named CoreGraphics
+window titled `Print`; CoreGraphics sees the parent Roamium window instead. The
+next experiment should make the native dialog watcher sheet-aware, likely by
+using Accessibility against the Roamium process/window hierarchy to find and
+press the sheet's Cancel button rather than relying only on CGWindow title
+matching.

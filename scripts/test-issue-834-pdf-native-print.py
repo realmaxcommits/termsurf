@@ -1003,7 +1003,19 @@ def classify(
             has_native_event("mac-ask-user-parent-window-sheet-response-printed")
             or has_native_event("mac-ask-user-parent-window-sheet-response-cancel")
         ):
-            state.first_failing_hop = "mac-print-parent-window-sheet-response-missing"
+            parent_sheet_visible = any(
+                "event=mac-ask-user-parent-window-sheet-delayed-2-attached-sheet ptr=" in line
+                and "class=NSPanel" in line
+                and "visible=true" in line
+                and "title=Print" in line
+                for line in native_lines
+            )
+            if parent_sheet_visible and print_watch and not print_watch.get("dialog_observed"):
+                state.first_failing_hop = "mac-print-parent-window-sheet-visible-watcher-missed"
+            elif parent_sheet_visible:
+                state.first_failing_hop = "mac-print-parent-window-sheet-visible-response-missing"
+            else:
+                state.first_failing_hop = "mac-print-parent-window-sheet-response-missing"
         elif has_native_event("mac-ask-user-begin-sheet-enter") and not (
             has_native_event("mac-ask-user-sheet-response-printed")
             or has_native_event("mac-ask-user-sheet-response-cancel")
