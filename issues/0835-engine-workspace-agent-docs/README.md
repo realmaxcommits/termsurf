@@ -99,3 +99,8 @@ This issue is complete when Chromium and WebKit have analogous root `AGENTS.md`
 files, stale or conflicting instructions are removed or redirected, and the new
 documentation has been reviewed through the normal issues-and-experiments
 workflow.
+
+## Experiments
+
+- [Experiment 1: Add engine AGENTS docs](01-add-engine-agents-docs.md) —
+  **Designed**
