@@ -154,6 +154,8 @@ Each feature row should ultimately record:
   — **Partial**
 - [Experiment 17: Prove native dialog cancellation](17-prove-native-dialog-cancellation.md)
   — **Pass**
+- [Experiment 18: Probe Roamium native print dialog](18-probe-roamium-native-print-dialog.md)
+  — **Designed**
 
 ## Roamium Phase
 
