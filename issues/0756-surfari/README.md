@@ -326,3 +326,5 @@ recovery. Much of this code can inform Surfari's implementation.
   — **Pass**
 - [Experiment 30: Prove Surfari crash handling](30-surfari-crash-handling.md) —
   **Pass**
+- [Experiment 31: Compare Surfari against the Roamium matrix](31-surfari-roamium-comparison.md)
+  — **Designed**
