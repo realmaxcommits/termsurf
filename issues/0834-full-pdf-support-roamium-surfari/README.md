@@ -164,6 +164,8 @@ Each feature row should ultimately record:
   — **Partial**
 - [Experiment 22: Fix Roamium macOS print panel presentation](22-fix-roamium-macos-print-panel-presentation.md)
   — **Partial**
+- [Experiment 23: Probe Roamium app-modal print presentation](23-probe-roamium-app-modal-print-presentation.md)
+  — **Designed**
 
 ## Roamium Phase
 
