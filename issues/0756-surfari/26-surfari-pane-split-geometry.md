@@ -98,3 +98,69 @@ frame/pixel geometry, Surfari resize, and positive/negative hit testing, the
 plan uses Roamium geometry scenarios as the source of truth without mutating the
 large Roamium runner, hygiene/build checks are present, and the plan commit had
 not already been made.
+
+## Result
+
+**Result:** Pass
+
+Added `scripts/test-issue-756-surfari-pane-split-geometry.sh` and ran it
+successfully with run ID `20260621-191750`.
+
+Evidence:
+
+- `logs/issue-756-exp26-surfari-pane-split/harness-20260621-191750.log`
+- `logs/issue-756-exp26-surfari-pane-split/app-split-right-20260621-191750.log`
+- `logs/issue-756-exp26-surfari-pane-split/surfari-split-right-20260621-191750.log`
+- `logs/issue-756-exp26-surfari-pane-split/app-split-down-20260621-191750.log`
+- `logs/issue-756-exp26-surfari-pane-split/surfari-split-down-20260621-191750.log`
+- `logs/issue-756-exp26-surfari-pane-split/app-split-right-resize-20260621-191750.log`
+- `logs/issue-756-exp26-surfari-pane-split/surfari-split-right-resize-20260621-191750.log`
+
+The harness proved the pane/split tranche inside the real Debug `TermSurf.app`:
+
+- `split-right` launched Surfari, dispatched the real `ctrl+d=new_split:right`
+  keybinding, observed the Surfari overlay shrink from `880x510` to `424x510`,
+  observed AppKit pixels change from `1760x1020` to `848x1020`, verified Zig
+  recorded those AppKit pixels, verified Surfari received
+  `resize ... pixel_width=848 pixel_height=1020 ... ffi=ts_set_view_size`,
+  verified an inside click hit the Surfari context, and verified a sibling-pane
+  click did not route to the Surfari context.
+- `split-down` launched Surfari, dispatched the real `ctrl+j=new_split:down`
+  keybinding, observed the Surfari overlay shrink from `880x510` to `880x187`,
+  observed AppKit pixels change from `1760x1020` to `1760x374`, verified Zig
+  recorded those AppKit pixels, verified Surfari received
+  `resize ... pixel_width=1760 pixel_height=374 ... ffi=ts_set_view_size`,
+  verified an inside click hit the Surfari context, and verified a sibling-pane
+  click did not route to the Surfari context.
+- `split-right-resize` launched Surfari, dispatched the real right split, then
+  dispatched `ctrl+l=resize_split:right,20`, observed the Surfari overlay grow
+  from `424x510` to `448x510`, observed AppKit pixels change to `896x1020`,
+  verified Zig recorded those AppKit pixels, verified Surfari received
+  `resize ... pixel_width=896 pixel_height=1020 ... ffi=ts_set_view_size`,
+  verified an inside click hit the Surfari context, and verified a sibling-pane
+  click did not route to the Surfari context.
+
+Updated `issues/0756-surfari/real-app-matrix.md` conservatively:
+
+- `Split panes` is now `Proven` for single-browser right/down split geometry.
+- `Pane resize` is now `Proven` for right-split divider resize.
+
+## Conclusion
+
+Surfari now has direct real-app evidence for pane/split geometry: right splits,
+down splits, and right-split divider resize move and resize the overlay,
+propagate the new pixel size to Surfari, keep positive hit testing attached to
+the browser pane, and reject sibling-pane hit testing.
+
+The next experiment should cover tab/window/focus geometry. It should not claim
+profile isolation, crash handling, click/drag parity, or final Roamium
+comparison until those rows have their own direct evidence.
+
+## Completion Review
+
+Adversarial completion review returned `APPROVED` with no findings. The reviewer
+confirmed that the result commit had not been made, `git diff --check`,
+`bash -n scripts/test-issue-756-surfari-pane-split-geometry.sh`, and Prettier
+checks passed, the saved run logs support the `Pane resize` and `Split panes`
+matrix updates, and the result does not smuggle claims for tabs, windows, focus,
+profiles, crashes, click/drag parity, or final Roamium comparison.

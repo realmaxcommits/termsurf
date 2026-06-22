@@ -317,4 +317,4 @@ recovery. Much of this code can inform Surfari's implementation.
 - [Experiment 25: Run Surfari lifecycle tranche](25-surfari-lifecycle-tranche.md)
   — **Pass**
 - [Experiment 26: Run Surfari pane and split geometry](26-surfari-pane-split-geometry.md)
-  — **Designed**
+  — **Pass**
