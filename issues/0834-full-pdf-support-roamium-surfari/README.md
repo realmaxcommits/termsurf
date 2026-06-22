@@ -158,6 +158,8 @@ Each feature row should ultimately record:
   — **Partial**
 - [Experiment 19: Trace Roamium native print plumbing](19-trace-roamium-native-print-plumbing.md)
   — **Pass**
+- [Experiment 20: Wire Roamium browser print settings](20-wire-roamium-browser-print-settings.md)
+  — **Designed**
 
 ## Roamium Phase
 
