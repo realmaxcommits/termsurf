@@ -196,3 +196,143 @@ Follow-up verdict: **Approved**.
 
 The reviewer found no remaining required design findings and approved the plan
 for the Experiment 43 plan commit and implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented `scripts/test-issue-834-surfari-pdf-links.sh`, a focused Surfari PDF
+link harness that generates a deterministic two-page PDF plus a local HTML
+target page, serves them from a local HTTP fixture server, launches repo-built
+Ghostboard, WebTUI, and Surfari, and activates PDF links through real
+TermSurf-routed mouse input.
+
+Final run:
+
+```bash
+rm -rf logs/issue-834-exp43-surfari-pdf-links
+env -u TERMSURF_SURFARI_CACONTEXT_LAYER \
+  scripts/test-issue-834-surfari-pdf-links.sh
+```
+
+Run ID: `20260622-213434`
+
+Summary:
+
+- summary JSON:
+  `logs/issue-834-exp43-surfari-pdf-links/surfari-pdf-links-summary.json`;
+- overall result: `pass`;
+- classification: `surfari-pdf-links-proven`;
+- `TERMSURF_SURFARI_CACONTEXT_LAYER`: unset;
+- repo binaries:
+  - Ghostboard:
+    `ghostboard/macos/build/Debug/TermSurf.app/Contents/MacOS/termsurf`;
+  - WebTUI: `target/debug/web`;
+  - Surfari: `target/debug/surfari`;
+  - WebKit debug framework: `webkit/src/WebKitBuild/Debug`;
+- cleanup: Ghostboard/WebTUI/Surfari scenarios and fixture server all
+  terminated.
+
+Internal PDF link evidence:
+
+- scenario status: `pass`;
+- baseline visible proof:
+  `logs/issue-834-exp43-surfari-pdf-links/baseline-internal-20260622-213434.json`;
+- post-click visible proof:
+  `logs/issue-834-exp43-surfari-pdf-links/post-internal-20260622-213434.json`;
+- delta proof:
+  `logs/issue-834-exp43-surfari-pdf-links/delta-internal-20260622-213434.json`;
+- page 1 green pixels dropped from `551778` to `136873`;
+- page 2 magenta pixels rose from `0` to `251930`;
+- the clicked PDF annotation rectangle was `[36 500 576 756]`;
+- the computed web click point was `761.0,201.3`;
+- the computed global click point was `1471,724`;
+- Surfari trace recorded a real mouse event for the target pane.
+
+External PDF link evidence:
+
+- scenario status: `pass`;
+- the fixture server recorded
+  `REQUEST path=/pdf-link-target.html status=200 content_type=text/html; charset=utf-8`;
+- Surfari trace recorded URL changes from the PDF URL to
+  `http://127.0.0.1:60862/pdf-link-target.html`;
+- render proof recorded the target URL with `cyan=8053538`;
+- baseline visible proof:
+  `logs/issue-834-exp43-surfari-pdf-links/baseline-external-20260622-213434.json`;
+- post-click visible proof:
+  `logs/issue-834-exp43-surfari-pdf-links/post-external-20260622-213434.json`;
+- delta proof:
+  `logs/issue-834-exp43-surfari-pdf-links/delta-external-20260622-213434.json`;
+- HTML target cyan pixels rose from `0` to `2014063` in the Ghostboard-window
+  overlay crop;
+- the clicked PDF annotation rectangle was `[36 60 576 300]`;
+- the computed web click point was `761.0,533.1`;
+- the computed global click point was `1471,1056`;
+- Surfari trace recorded a real mouse event for the target pane.
+
+Hygiene and verification:
+
+```bash
+./surfari/libtermsurf_webkit/build.sh
+cargo fmt -p surfari
+cargo build -p surfari
+cargo build -p webtui
+(cd ghostboard && macos/build.nu --configuration Debug --action build)
+bash -n scripts/test-issue-834-surfari-pdf-links.sh
+git diff --check
+git -C webkit/src status --short
+```
+
+All checks passed. The WebKit shim build emitted the existing SDK-version linker
+warning, and the Ghostboard build emitted the existing SwiftLint warning in
+`SurfaceView_AppKit.swift`; neither blocked the build.
+
+## Conclusion
+
+Surfari PDF link activation works through the real TermSurf input path in the
+default snapshot-backed presentation mode. Internal PDF links navigate within
+the PDF and produce a visible page-color transition. External PDF links request
+and display the local HTML target in the same Surfari/Ghostboard overlay, proven
+by server logs, Surfari URL/render traces, and Ghostboard-window cropped pixel
+counts.
+
+The next experiment should continue down the Surfari PDF matrix and add durable
+regression coverage for completed Surfari PDF workflows once enough individual
+behaviors have been proven.
+
+## Completion Review
+
+An external Codex review checked the completed Experiment 43 implementation,
+result, and evidence.
+
+Initial verdict: **Changes required**.
+
+Findings:
+
+- the external target page reused yellow, which was already present in the PDF
+  baseline, so the external target-color proof did not satisfy the planned
+  "starts below 5,000 pixels" threshold;
+- external scenario pass could be satisfied from target-color pixels without
+  requiring the external target request;
+- the result overclaimed target render-proof evidence because the recorded
+  `render_proof` line still referred to the pre-click PDF URL;
+- the completion review had not yet been recorded;
+- the result listed only the lightweight hygiene checks instead of the full
+  verification set.
+
+Resolution:
+
+- changed the HTML target page color to cyan and added cyan to the overlay pixel
+  counter;
+- made the `pre_name=none` delta path require the target color to start below
+  5,000 pixels;
+- required external pass to have target request, target URL, target render
+  proof, and target-color delta evidence;
+- updated the result to use the corrected `20260622-213434` run and the full
+  verification command set.
+
+Follow-up verdict: **Approved after recording this section**.
+
+The follow-up review found that the technical findings were resolved and that
+the only remaining required fix was to record the completion review in this
+file. This section records that review and its resolution.
