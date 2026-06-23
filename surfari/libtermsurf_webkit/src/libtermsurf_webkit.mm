@@ -232,6 +232,11 @@ static bool pdfCopyInProcessProbeEnabled()
     return NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_COPY_INPROCESS"].length > 0;
 }
 
+static bool pdfCopyDirectEnabled()
+{
+    return NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_COPY_DIRECT"].length > 0;
+}
+
 static NSString *describeObject(id object)
 {
     if (!object)
@@ -1689,22 +1694,23 @@ void ts_forward_key_event(ts_web_contents_t wc, int type, int keycode, const cha
     }
     if (is_copy_key_down) {
         traceCopyState(contents, @"after-external-copy");
-        if (pdfCopyInProcessProbeEnabled()) {
-            traceCopyState(contents, @"before-inprocess-copy");
+        if (pdfCopyInProcessProbeEnabled() || pdfCopyDirectEnabled()) {
+            NSString *copyTraceEvent = pdfCopyDirectEnabled() ? @"surfari-pdf-copy-direct" : @"surfari-pdf-copy-inprocess";
+            traceCopyState(contents, pdfCopyDirectEnabled() ? @"before-direct-copy" : @"before-inprocess-copy");
             BOOL ok_nil = [NSApp sendAction:@selector(copy:) to:nil from:nil];
-            appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-inprocess tab=%d route=sendActionNil ok=%d clipboard={%@}", contents->tab_id, ok_nil ? 1 : 0, clipboardSample()]);
+            appendPdfCopyTrace([NSString stringWithFormat:@"%@ tab=%d route=sendActionNil ok=%d clipboard={%@}", copyTraceEvent, contents->tab_id, ok_nil ? 1 : 0, clipboardSample()]);
             BOOL ok_webview = [NSApp sendAction:@selector(copy:) to:contents->web_view from:nil];
-            appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-inprocess tab=%d route=sendActionWebView ok=%d clipboard={%@}", contents->tab_id, ok_webview ? 1 : 0, clipboardSample()]);
+            appendPdfCopyTrace([NSString stringWithFormat:@"%@ tab=%d route=sendActionWebView ok=%d clipboard={%@}", copyTraceEvent, contents->tab_id, ok_webview ? 1 : 0, clipboardSample()]);
             if ([contents->web_view respondsToSelector:@selector(copy:)]) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
                 [contents->web_view performSelector:@selector(copy:) withObject:nil];
 #pragma clang diagnostic pop
-                appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-inprocess tab=%d route=performWebViewCopy responds=1 invoked=1 clipboard={%@}", contents->tab_id, clipboardSample()]);
+                appendPdfCopyTrace([NSString stringWithFormat:@"%@ tab=%d route=performWebViewCopy responds=1 invoked=1 clipboard={%@}", copyTraceEvent, contents->tab_id, clipboardSample()]);
             } else {
-                appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-inprocess tab=%d route=performWebViewCopy responds=0 invoked=0 reason=not-responds clipboard={%@}", contents->tab_id, clipboardSample()]);
+                appendPdfCopyTrace([NSString stringWithFormat:@"%@ tab=%d route=performWebViewCopy responds=0 invoked=0 reason=not-responds clipboard={%@}", copyTraceEvent, contents->tab_id, clipboardSample()]);
             }
-            traceCopyState(contents, @"after-inprocess-copy");
+            traceCopyState(contents, pdfCopyDirectEnabled() ? @"after-direct-copy" : @"after-inprocess-copy");
         }
     }
     scheduleSnapshotLayerRefresh(contents, @"key-event");

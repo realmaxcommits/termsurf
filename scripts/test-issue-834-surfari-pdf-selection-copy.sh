@@ -343,6 +343,7 @@ drag_points_for_text() {
   local present_line="$1"
   python3 - "$present_line" <<'PY'
 import re
+import os
 import sys
 
 line = sys.argv[1]
@@ -353,9 +354,9 @@ _, _, frame_w, frame_h = map(float, frame.groups())
 # The generated PDF text is near the upper middle of the right-aligned PDF page.
 # These points intentionally sweep across the visible text line rather than the
 # whole page so a copy only passes if the PDF viewer selection path works.
-start_x = frame_w * 0.64
-end_x = frame_w * 0.99
-y = frame_h * 0.43
+start_x = frame_w * float(os.environ.get("TERMSURF_ISSUE834_PDF_COPY_DRAG_START_X_RATIO", "0.64"))
+end_x = frame_w * float(os.environ.get("TERMSURF_ISSUE834_PDF_COPY_DRAG_END_X_RATIO", "0.99"))
+y = frame_h * float(os.environ.get("TERMSURF_ISSUE834_PDF_COPY_DRAG_Y_RATIO", "0.43"))
 print(f"{start_x:.1f} {y:.1f} {end_x:.1f} {y:.1f}")
 PY
 }

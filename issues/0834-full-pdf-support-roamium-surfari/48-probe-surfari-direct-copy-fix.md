@@ -142,3 +142,101 @@ Follow-up verdict: **Approved**.
 
 The reviewer found no remaining must-fix design issues and approved the
 Experiment 48 plan commit.
+
+## Result
+
+**Result:** Pass
+
+The direct-copy probe was added behind `TERMSURF_SURFARI_PDF_COPY_DIRECT=1`. The
+existing Surfari PDF selection/copy harness now accepts drag-ratio overrides,
+and the Experiment 48 wrapper was added as
+`scripts/test-issue-834-surfari-direct-copy-fix.sh`.
+
+Verification:
+
+```bash
+bash -n scripts/test-issue-834-surfari-direct-copy-fix.sh
+cargo fmt -p surfari -- --check
+surfari/libtermsurf_webkit/build.sh
+cargo build -p surfari
+git diff --check
+git -C webkit/src status --short
+rm -rf logs/issue-834-exp48-surfari-direct-copy-fix
+scripts/test-issue-834-surfari-direct-copy-fix.sh
+```
+
+The diagnostic run was `20260622-232631`. Its summary is:
+
+```text
+logs/issue-834-exp48-surfari-direct-copy-fix/surfari-direct-copy-fix-summary.json
+```
+
+The run classified the result as:
+
+```json
+{
+  "classification": "direct-copy-partial-selection",
+  "overall_result": "pass"
+}
+```
+
+Key evidence:
+
+- Both baseline and direct-copy-flag modes used the same widened drag ratios:
+  start x `0.58`, end x `0.99`, y `0.43`.
+- The widened baseline still reproduced the existing Surfari partial failure:
+  the clipboard remained the sentinel after normal external `Cmd+C`.
+- The direct-copy flag did not copy the marker on the first normal `Cmd+C`
+  attempt; the clipboard remained the sentinel after direct `sendAction` and
+  direct `WKWebView.copy(nil)` calls.
+- During the later fallback copy path, the direct-copy flag changed the
+  clipboard to `TS834PDFCOPYQXJ`, which is still missing the final `Z` and does
+  not contain the full accepted marker `TS834PDFCOPYQXJZ`.
+- Clipboard restoration succeeded.
+
+Important artifacts:
+
+- `logs/issue-834-exp48-surfari-direct-copy-fix/baseline-exp44-summary-20260622-232631.json`
+- `logs/issue-834-exp48-surfari-direct-copy-fix/direct-exp44-summary-20260622-232631.json`
+- `logs/issue-834-exp48-surfari-direct-copy-fix/baseline-copy-trace-20260622-232631.log`
+- `logs/issue-834-exp48-surfari-direct-copy-fix/direct-copy-trace-20260622-232631.log`
+
+The WebKit bridge build emitted the existing macOS SDK warning about building
+for macOS 26.0 while linking a WebKit framework built for 26.5, but completed
+successfully.
+
+## Conclusion
+
+The direct-copy candidate is not sufficient as a product fix. It can make the
+embedded Surfari path copy some PDF text during the fallback copy path, but it
+does not copy the full accepted marker and does not fix the first normal
+external `Cmd+C` attempt.
+
+The remaining problem now appears to involve the PDF selection extent and/or the
+timing/state of the PDF plugin selection, not only AppKit's missing normal copy
+target. The next experiment should target selection geometry more directly: use
+a marker or drag path that can prove whole-text selection in Surfari, or add a
+PDF fixture with wider spacing/sentinel tokens so partial-selection boundaries
+are easier to diagnose.
+
+## Completion Review
+
+An external Codex completion review checked the result, implementation, harness
+changes, and final summary.
+
+Verdict: **Approved after recording this review**.
+
+Finding:
+
+- the experiment file needed to record the completion review before the result
+  commit.
+
+Resolution:
+
+- this section records the completion review verdict and finding.
+
+The reviewer found no implementation must-fix issues. It agreed that the `Pass`
+/ `direct-copy-partial-selection` classification is supported by the evidence,
+that the behavior is diagnostic and env-gated behind
+`TERMSURF_SURFARI_PDF_COPY_DIRECT=1`, and that the result language does not
+claim Surfari PDF copy is fixed.
