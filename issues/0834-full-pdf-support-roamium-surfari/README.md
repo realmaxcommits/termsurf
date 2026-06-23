@@ -239,7 +239,7 @@ Each feature row should ultimately record:
 - [Experiment 59: Fix Surfari PDF point scaling](59-fix-surfari-pdf-point-scaling.md)
   — **Fail**
 - [Experiment 60: Compare PDF action paths](60-compare-pdf-action-paths.md) —
-  **Designed**
+  **Pass**
 
 ## Roamium Phase
 
