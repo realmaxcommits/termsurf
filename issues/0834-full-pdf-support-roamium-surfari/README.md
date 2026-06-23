@@ -229,7 +229,7 @@ Each feature row should ultimately record:
 - [Experiment 54: Calibrate standalone PDF selection geometry](54-calibrate-standalone-pdf-selection-geometry.md)
   — **Pass**
 - [Experiment 55: Test embedded PDF calibrated gestures](55-test-embedded-pdf-calibrated-gestures.md)
-  — **Designed**
+  — **Pass**
 
 ## Roamium Phase
 
