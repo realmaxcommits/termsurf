@@ -163,3 +163,97 @@ after Experiment 55. The initial review required stricter controls:
 
 The design was updated for each finding. A follow-up Codex review confirmed the
 required findings were resolved and approved the design for the plan commit.
+
+## Result
+
+**Result:** Partial
+
+The responder activation harness ran all eight requested modes across the five
+calibrated cells from Experiment 55. The run wrote:
+
+```text
+logs/issue-834-exp56-surfari-pdf-responder-activation/surfari-pdf-responder-activation-summary.json
+```
+
+The oracle, calibration, and baseline gates all opened:
+
+- Experiment 50 separated-token oracle: open;
+- Experiment 54 standalone calibration: open;
+- no-flag `normal-control`: reproduced the embedded responder gap;
+- flagged `baseline`: reproduced the embedded responder gap;
+- every cell had a matched successful Experiment 54 standalone baseline;
+- non-`activate-app` modes recorded complete responder/copy traces.
+
+The final classifier was:
+
+```json
+{
+  "overall_result": "partial",
+  "classification": "harness-insufficient"
+}
+```
+
+The reason for the partial result is specific: the `activate-app` probe made the
+cell runs non-comparable. Those cells rendered the fixture, forwarded the drag,
+and recorded geometry traces, but failed before the Browse-mode Cmd+C checks
+could complete. That left no per-cell Experiment 44 summaries for the
+`activate-app` cells, so the global fixture identity gate correctly stayed
+closed for this full matrix run.
+
+The other probe modes were comparable and useful. `key-window`, `main-window`,
+`key-main-window`, `explicit-first-responder`, and `explicit-copy-target` each
+ran all five calibrated cells with matched fixtures and complete traces. None of
+those modes copied all three tokens through primary external Cmd+C. The
+`explicit-copy-target` mode also failed to copy all three tokens through the
+explicit WebView target route. The copied-token evidence stayed at the embedded
+baseline shape: left-side tokens only.
+
+Verification passed:
+
+```bash
+bash -n scripts/test-issue-834-surfari-pdf-responder-activation.sh
+cargo fmt -p surfari -- --check
+surfari/libtermsurf_webkit/build.sh
+cargo build -p surfari
+git diff --check
+git -C webkit/src status --short
+```
+
+The responder harness was run with:
+
+```bash
+rm -rf logs/issue-834-exp56-surfari-pdf-responder-activation
+scripts/test-issue-834-surfari-pdf-responder-activation.sh
+```
+
+`surfari/libtermsurf_webkit/build.sh` emitted the existing macOS SDK warning
+about linking a WebKit framework built for a newer macOS version, then built
+`libtermsurf_webkit.dylib` and `smoke-test` successfully.
+
+## Conclusion
+
+Experiment 56 did not find an activation/responder probe that fixes embedded PDF
+selection/copy. The failed `activate-app` mode shows that activating the hidden
+Surfari helper disrupts the keyboard-delivery harness and is not a direct
+product-fix path for external Cmd+C. The comparable modes show that merely
+allowing the host window to become key/main, making the WebView first responder,
+or explicitly routing `copy:` to the WebView does not recover the missing middle
+and right PDF tokens.
+
+The next experiment should stop treating generic AppKit responder activation as
+the likely fix. The remaining evidence points back to PDF selection geometry,
+PDFKit-internal hit testing, or WebKit/PDF plugin coordinate translation inside
+the embedded host.
+
+## Completion Review
+
+Codex reviewed the Experiment 56 diff, summary facts, verification output, and
+result language before the result commit. The review required one fix: record
+this completion-review section before committing. It also suggested listing the
+responder harness command in the result record, which was added.
+
+The reviewer found no other must-fix code, harness, or documentation issue. It
+agreed the `Partial` / `harness-insufficient` result is justified, that the
+comparable modes produced useful negative evidence without finding activation or
+explicit-copy winners, and that the env-gated native code preserves normal
+no-flag behavior.

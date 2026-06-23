@@ -40,14 +40,31 @@
 @interface TSHostWindow : NSWindow
 @end
 
+static NSString *pdfResponderProbeModeRaw()
+{
+    if (NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_RESPONDER_PROBE"].length == 0)
+        return nil;
+    NSString *mode = NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_RESPONDER_MODE"];
+    return mode.length ? mode : @"baseline";
+}
+
+static bool pdfResponderProbeModeIs(NSString *mode)
+{
+    return [pdfResponderProbeModeRaw() isEqualToString:mode];
+}
+
 @implementation TSHostWindow
 - (BOOL)canBecomeKeyWindow
 {
+    if (pdfResponderProbeModeIs(@"key-window") || pdfResponderProbeModeIs(@"key-main-window"))
+        return YES;
     return NO;
 }
 
 - (BOOL)canBecomeMainWindow
 {
+    if (pdfResponderProbeModeIs(@"main-window") || pdfResponderProbeModeIs(@"key-main-window"))
+        return YES;
     return NO;
 }
 @end
@@ -260,6 +277,11 @@ static bool pdfViewGeometryTraceEnabled()
     return NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_VIEW_GEOMETRY_TRACE"].length > 0;
 }
 
+static NSString *pdfResponderProbeMode()
+{
+    return pdfResponderProbeModeRaw();
+}
+
 static NSString *describeObject(id object)
 {
     if (!object)
@@ -442,6 +464,55 @@ static void tracePdfViewGeometry(WebContents *contents, NSString *label, int x, 
     appendPdfViewGeometryTrace([NSString stringWithFormat:@"surfari-pdf-view-geometry-hit-chain tab=%d label=%@ chain=%@", contents->tab_id, label, describePointInViewChain(hit, windowPoint)]);
     appendPdfViewGeometryTrace([NSString stringWithFormat:@"surfari-pdf-view-geometry-tree tab=%d label=%@ tree=%@", contents->tab_id, label, describeViewTree(contents->web_view, 0)]);
     appendPdfViewGeometryTrace([NSString stringWithFormat:@"surfari-pdf-view-geometry-scroll tab=%d label=%@ scroll=%@", contents->tab_id, label, describeScrollViews(contents->web_view)]);
+}
+
+static void applyPdfResponderProbe(WebContents *contents, NSString *phase)
+{
+    NSString *mode = pdfResponderProbeMode();
+    if (!mode.length || [mode isEqualToString:@"baseline"] || !contents || !contents->web_view)
+        return;
+
+    NSWindow *window = contents->window;
+    BOOL beforeKey = window.isKeyWindow;
+    BOOL beforeMain = window.isMainWindow;
+    id beforeTargetNil = [NSApp targetForAction:@selector(copy:) to:nil from:nil];
+    id beforeTargetWebView = [NSApp targetForAction:@selector(copy:) to:nil from:contents->web_view];
+
+    if ([mode isEqualToString:@"activate-app"]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+    } else if ([mode isEqualToString:@"key-window"]) {
+        [window makeKeyWindow];
+    } else if ([mode isEqualToString:@"main-window"]) {
+        [window makeMainWindow];
+    } else if ([mode isEqualToString:@"key-main-window"]) {
+        [window makeKeyAndOrderFront:nil];
+        [window makeMainWindow];
+    } else if ([mode isEqualToString:@"explicit-first-responder"]) {
+        [window makeFirstResponder:contents->web_view];
+    }
+
+    id afterTargetNil = [NSApp targetForAction:@selector(copy:) to:nil from:nil];
+    id afterTargetWebView = [NSApp targetForAction:@selector(copy:) to:nil from:contents->web_view];
+    appendPdfViewGeometryTrace([NSString stringWithFormat:
+        @"surfari-pdf-responder-probe tab=%d phase=%@ mode=%@ before_key=%d before_main=%d after_key=%d after_main=%d app_key_window=%@ app_main_window=%@ before_target_nil=%@ before_target_webview=%@ after_target_nil=%@ after_target_webview=%@ first_responder=%@ responder_chain=%@",
+        contents->tab_id,
+        phase ?: @"unknown",
+        mode,
+        beforeKey ? 1 : 0,
+        beforeMain ? 1 : 0,
+        window.isKeyWindow ? 1 : 0,
+        window.isMainWindow ? 1 : 0,
+        describeObject(NSApp.keyWindow),
+        describeObject(NSApp.mainWindow),
+        describeObject(beforeTargetNil),
+        describeObject(beforeTargetWebView),
+        describeObject(afterTargetNil),
+        describeObject(afterTargetWebView),
+        describeObject(window.firstResponder),
+        responderChain(window.firstResponder)]);
 }
 
 static void traceJavaScriptSelection(WebContents *contents, NSString *label)
@@ -1738,6 +1809,7 @@ void ts_forward_mouse_event(ts_web_contents_t wc, int type, int button, int x, i
     NSPoint original_location = eventLocationInWindow(contents, x, y);
     NSPoint location = adjustedPdfSelectionLocation(contents, x, y, is_up && was_dragging);
     if (!is_up) {
+        applyPdfResponderProbe(contents, @"before-gesture");
         updateClickCount(contents, button, location);
         contents->mouse_buttons_down |= mouseButtonMask(button);
     } else {
@@ -1878,6 +1950,7 @@ void ts_forward_key_event(ts_web_contents_t wc, int type, int keycode, const cha
 
     bool is_copy_key_down = type == 0 && keycode == 67 && (modifiers & 8) != 0;
     if (is_copy_key_down) {
+        applyPdfResponderProbe(contents, @"before-copy");
         traceCopyState(contents, @"before-external-copy");
         tracePdfViewGeometry(contents, @"before-external-copy", 0, 0, NSMakePoint(0, 0));
     }
@@ -1895,6 +1968,23 @@ void ts_forward_key_event(ts_web_contents_t wc, int type, int keycode, const cha
     if (is_copy_key_down) {
         traceCopyState(contents, @"after-external-copy");
         tracePdfViewGeometry(contents, @"after-external-copy", 0, 0, NSMakePoint(0, 0));
+        if ([pdfResponderProbeMode() isEqualToString:@"explicit-copy-target"]) {
+            traceCopyState(contents, @"before-explicit-copy-target");
+            tracePdfViewGeometry(contents, @"before-explicit-copy-target", 0, 0, NSMakePoint(0, 0));
+            BOOL ok_webview = [NSApp sendAction:@selector(copy:) to:contents->web_view from:nil];
+            appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-explicit-copy-target tab=%d route=sendActionWebView ok=%d clipboard={%@}", contents->tab_id, ok_webview ? 1 : 0, clipboardSample()]);
+            if ([contents->web_view respondsToSelector:@selector(copy:)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [contents->web_view performSelector:@selector(copy:) withObject:nil];
+#pragma clang diagnostic pop
+                appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-explicit-copy-target tab=%d route=performWebViewCopy responds=1 invoked=1 clipboard={%@}", contents->tab_id, clipboardSample()]);
+            } else {
+                appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-explicit-copy-target tab=%d route=performWebViewCopy responds=0 invoked=0 reason=not-responds clipboard={%@}", contents->tab_id, clipboardSample()]);
+            }
+            traceCopyState(contents, @"after-explicit-copy-target");
+            tracePdfViewGeometry(contents, @"after-explicit-copy-target", 0, 0, NSMakePoint(0, 0));
+        }
         if (pdfCopyInProcessProbeEnabled() || pdfCopyDirectEnabled()) {
             NSString *copyTraceEvent = pdfCopyDirectEnabled() ? @"surfari-pdf-copy-direct" : @"surfari-pdf-copy-inprocess";
             traceCopyState(contents, pdfCopyDirectEnabled() ? @"before-direct-copy" : @"before-inprocess-copy");
