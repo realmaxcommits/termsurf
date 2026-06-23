@@ -254,6 +254,14 @@ static bool pdfCopyDirectEnabled()
     return NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_COPY_DIRECT"].length > 0;
 }
 
+static NSString *pdfMouseDispatchProbeMode()
+{
+    if (NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_MOUSE_DISPATCH_PROBE"].length == 0)
+        return nil;
+    NSString *mode = NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_MOUSE_DISPATCH_MODE"];
+    return mode.length ? mode : @"current";
+}
+
 static NSString *pdfSelectionEdgeProbeMode()
 {
     NSString *mode = NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_SELECTION_EDGE_MODE"];
@@ -287,6 +295,19 @@ static NSString *describeObject(id object)
     if (!object)
         return @"nil";
     return [NSString stringWithFormat:@"%@:%p", NSStringFromClass([object class]), object];
+}
+
+static NSString *describeView(NSView *view)
+{
+    if (!view)
+        return @"nil";
+    return [NSString stringWithFormat:@"%@:%p frame=%@ bounds=%@ hidden=%d alpha=%.3f",
+                     NSStringFromClass([view class]),
+                     view,
+                     NSStringFromRect(view.frame),
+                     NSStringFromRect(view.bounds),
+                     view.hidden ? 1 : 0,
+                     view.alphaValue];
 }
 
 static NSString *responderChain(NSResponder *responder)
@@ -378,6 +399,20 @@ static NSString *describeViewTree(NSView *view, NSUInteger depth)
             [items addObject:[NSString stringWithFormat:@"[%@]", child]];
     }
     return [items componentsJoinedByString:@" "];
+}
+
+static NSView *findDescendantViewWithClassName(NSView *view, NSString *className)
+{
+    if (!view || !className.length)
+        return nil;
+    if ([NSStringFromClass([view class]) isEqualToString:className])
+        return view;
+    for (NSView *subview in view.subviews) {
+        NSView *found = findDescendantViewWithClassName(subview, className);
+        if (found)
+            return found;
+    }
+    return nil;
 }
 
 static NSString *describeScrollViews(NSView *view)
@@ -805,10 +840,11 @@ static void updateClickCount(WebContents *contents, int button, NSPoint position
     contents->mouse_click_button = button;
 }
 
-static void deliverMouseEvent(WebContents *contents, NSEvent *event)
+static void invokeMouseEventOnTarget(WebContents *contents, NSEvent *event, NSView *target)
 {
-    NSView *target = [contents->web_view hitTest:event.locationInWindow] ?: contents->web_view;
-    installMouseEventSwizzles(contents);
+    (void)contents;
+    if (!target)
+        return;
     switch (event.type) {
     case NSEventTypeLeftMouseDown:
         [NSApp _setCurrentEvent:event];
@@ -818,6 +854,11 @@ static void deliverMouseEvent(WebContents *contents, NSEvent *event)
     case NSEventTypeLeftMouseUp:
         [NSApp _setCurrentEvent:event];
         [target mouseUp:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeLeftMouseDragged:
+        [NSApp _setCurrentEvent:event];
+        [target mouseDragged:event];
         [NSApp _setCurrentEvent:nil];
         break;
     case NSEventTypeRightMouseDown:
@@ -847,6 +888,68 @@ static void deliverMouseEvent(WebContents *contents, NSEvent *event)
         break;
     default:
         break;
+    }
+}
+
+static NSView *mouseDispatchTarget(WebContents *contents, NSEvent *event, NSString *mode, NSView *hit)
+{
+    if (!contents || !contents->web_view)
+        return nil;
+    if ([mode isEqualToString:@"webview-direct"])
+        return contents->web_view;
+    if ([mode isEqualToString:@"flipped-view-direct"])
+        return findDescendantViewWithClassName(contents->web_view, @"WKFlippedView");
+    if ([mode isEqualToString:@"pdf-hud-direct"])
+        return findDescendantViewWithClassName(contents->web_view, @"WKPDFHUDView");
+    (void)event;
+    return hit ?: contents->web_view;
+}
+
+static void appendMouseDispatchTrace(WebContents *contents, NSEvent *event, NSString *phase, NSString *mode, NSView *hit, NSView *target, bool delivered)
+{
+    if (!pdfCopyTraceEnabled())
+        return;
+    NSWindow *window = contents ? contents->window : nil;
+    appendPdfCopyTrace([NSString stringWithFormat:
+        @"surfari-pdf-mouse-dispatch tab=%d phase=%@ mode=%@ type=%ld button=%ld event_number=%ld click_count=%ld modifiers=%lu location=%@ hit=%@ target=%@ target_exists=%d delivered=%d window=%@ key=%d main=%d visible=%d window_number=%ld current_event=%@ swizzle_active=%d",
+        contents ? contents->tab_id : 0,
+        phase ?: @"unknown",
+        mode ?: @"normal",
+        (long)event.type,
+        (long)event.buttonNumber,
+        (long)event.eventNumber,
+        (long)event.clickCount,
+        (unsigned long)event.modifierFlags,
+        NSStringFromPoint(event.locationInWindow),
+        describeView(hit),
+        describeView(target),
+        target ? 1 : 0,
+        delivered ? 1 : 0,
+        describeObject(window),
+        window.isKeyWindow ? 1 : 0,
+        window.isMainWindow ? 1 : 0,
+        window.isVisible ? 1 : 0,
+        (long)window.windowNumber,
+        describeObject(NSApp.currentEvent),
+        g_dispatching_mouse_contents ? 1 : 0]);
+}
+
+static void deliverMouseEvent(WebContents *contents, NSEvent *event, NSString *phase)
+{
+    NSString *mode = pdfMouseDispatchProbeMode();
+    NSView *hit = [contents->web_view hitTest:event.locationInWindow] ?: contents->web_view;
+    NSString *effectiveMode = mode ?: @"current";
+    NSView *target = mouseDispatchTarget(contents, event, effectiveMode, hit);
+
+    installMouseEventSwizzles(contents);
+    if ([effectiveMode isEqualToString:@"window-send-event"]) {
+        [NSApp _setCurrentEvent:event];
+        [contents->window sendEvent:event];
+        [NSApp _setCurrentEvent:nil];
+        appendMouseDispatchTrace(contents, event, phase, effectiveMode, hit, target, true);
+    } else {
+        invokeMouseEventOnTarget(contents, event, target);
+        appendMouseDispatchTrace(contents, event, phase, effectiveMode, hit, target, target != nil);
     }
     restoreMouseEventSwizzles();
 }
@@ -1849,7 +1952,7 @@ void ts_forward_mouse_event(ts_web_contents_t wc, int type, int button, int x, i
             appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-selection-edge tab=%d mode=extra-drag x=%d y=%d original_location=%@ adjusted_location=%@ delta=%.2f", contents->tab_id, x, y, NSStringFromPoint(original_location), NSStringFromPoint(extra_location), pdfSelectionEdgeDeltaX()]);
         }
     }
-    deliverMouseEvent(contents, event);
+    deliverMouseEvent(contents, event, type == 1 ? @"mouse-up" : @"mouse-down");
     if (type == 1)
         traceCopyState(contents, @"after-mouse-up");
     scheduleSnapshotLayerRefresh(contents, @"mouse-event");
@@ -1873,19 +1976,25 @@ void ts_forward_mouse_move(ts_web_contents_t wc, int x, int y, int modifiers)
         eventNumber:++contents->mouse_event_number
         clickCount:is_drag ? contents->mouse_click_count : 0
         pressure:0.0];
-    [NSApp _setCurrentEvent:event];
-    contents->suppress_cursor_notifications = true;
-    if (is_drag) {
-        if ([pdfSelectionEdgeProbeMode() isEqualToString:@"target"]) {
-            NSView *target = [contents->web_view hitTest:event.locationInWindow] ?: contents->web_view;
-            [target mouseDragged:event];
-        } else {
-            [contents->web_view mouseDragged:event];
-        }
-    } else
-        [contents->web_view _simulateMouseMove:event];
-    contents->suppress_cursor_notifications = false;
-    [NSApp _setCurrentEvent:nil];
+    if (pdfMouseDispatchProbeMode() && is_drag) {
+        contents->suppress_cursor_notifications = true;
+        deliverMouseEvent(contents, event, is_drag ? @"mouse-drag" : @"mouse-move");
+        contents->suppress_cursor_notifications = false;
+    } else {
+        [NSApp _setCurrentEvent:event];
+        contents->suppress_cursor_notifications = true;
+        if (is_drag) {
+            if ([pdfSelectionEdgeProbeMode() isEqualToString:@"target"]) {
+                NSView *target = [contents->web_view hitTest:event.locationInWindow] ?: contents->web_view;
+                [target mouseDragged:event];
+            } else {
+                [contents->web_view mouseDragged:event];
+            }
+        } else
+            [contents->web_view _simulateMouseMove:event];
+        contents->suppress_cursor_notifications = false;
+        [NSApp _setCurrentEvent:nil];
+    }
     if (is_drag && pdfCopyTraceEnabled()) {
         appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-drag tab=%d x=%d y=%d modifiers=%d location=%@ original_location=%@ edge_mode=%@ edge_delta=%.2f", contents->tab_id, x, y, modifiers, NSStringFromPoint(event.locationInWindow), NSStringFromPoint(original_location), pdfSelectionEdgeProbeMode() ?: @"none", pdfSelectionEdgeDeltaX()]);
     }

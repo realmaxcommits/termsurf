@@ -233,7 +233,7 @@ Each feature row should ultimately record:
 - [Experiment 56: Probe embedded PDF responder activation](56-probe-embedded-pdf-responder-activation.md)
   — **Partial**
 - [Experiment 57: Probe PDF mouse dispatch path](57-probe-pdf-mouse-dispatch-path.md)
-  — **Designed**
+  — **Pass**
 
 ## Roamium Phase
 

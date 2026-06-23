@@ -187,3 +187,117 @@ before the plan commit:
 The README already included the required `Designed` status for Experiment 57,
 wrapped onto the following line by Prettier. The design was updated for the
 substantive findings above.
+
+## Result
+
+**Result:** Pass
+
+Experiment 57 added env-gated Surfari PDF mouse-dispatch probes and the
+`scripts/test-issue-834-surfari-pdf-mouse-dispatch-path.sh` harness. The final
+run wrote:
+
+```text
+logs/issue-834-exp57-surfari-pdf-mouse-dispatch-path/surfari-pdf-mouse-dispatch-path-summary.json
+```
+
+The summary reported:
+
+```json
+{
+  "overall_result": "pass",
+  "classification": "dispatch-changes-selection-only",
+  "oracle_gate_open": true,
+  "calibration_gate_open": true,
+  "mode_names_complete": true,
+  "matched_calibrated_cells": true,
+  "fixture_identity_match": true,
+  "traces_complete": true,
+  "dispatch_traces_complete": true,
+  "normal_baseline_reproduced": true,
+  "flagged_baseline_reproduced": true,
+  "changed_selection_count": 1,
+  "clipboard_restore_status": "restored"
+}
+```
+
+The first harness run exposed a real implementation bug in the probe itself:
+`NSEventTypeLeftMouseDragged` was not handled by the refactored dispatch helper,
+so flagged-current delivered down/up but dropped the drag. That made the
+flagged-current control non-comparable. The helper was fixed to dispatch
+`mouseDragged:` for `NSEventTypeLeftMouseDragged`, and the matrix was rerun from
+a clean log directory.
+
+The rerun proved that the probe flag does not change the selection-relevant
+down/drag/up dispatch path or copied-token outcome for the flagged-current
+control. Non-drag mouse-move remains on the original no-flag
+`_simulateMouseMove:` path so the control does not change hover/move behavior
+outside the drag stream. Normal-control and flagged-current both reproduced the
+Experiment 55 embedded baseline. Every calibrated cell in both controls copied
+only `LEFT834` or the same left-side subset, never all three tokens.
+
+The non-control modes mostly reproduced the same left-side-token behavior:
+
+- `webview-direct`;
+- `flipped-view-direct`;
+- `pdf-hud-direct`.
+
+`window-send-event` matched the baseline for four calibrated cells, but changed
+`oracle-x-wide` from the baseline left-side subset to an even smaller partial
+copy (`LEFT`). It still did not copy all three tokens, so it is not a fix
+candidate.
+
+Every non-control mode recorded dispatch traces for the selection-relevant
+`mouse-down`, `mouse-drag`, and `mouse-up` events. Pre-drag non-drag
+`mouse-move` is intentionally excluded from the classification gate because the
+PDF text selection operation is driven by the down/drag/up stream, and the
+control keeps non-drag movement on the original `_simulateMouseMove:` path. No
+mode copied all three tokens through primary external Cmd+C, and no descendant
+target mode reported an unavailable target.
+
+Verification passed:
+
+```bash
+bash -n scripts/test-issue-834-surfari-pdf-mouse-dispatch-path.sh
+cargo fmt -p surfari -- --check
+surfari/libtermsurf_webkit/build.sh
+cargo build -p surfari
+git diff --check
+git -C webkit/src status --short
+rm -rf logs/issue-834-exp57-surfari-pdf-mouse-dispatch-path
+scripts/test-issue-834-surfari-pdf-mouse-dispatch-path.sh
+```
+
+`surfari/libtermsurf_webkit/build.sh` emitted the existing macOS SDK warning
+about linking a WebKit framework built for a newer macOS version, then built
+`libtermsurf_webkit.dylib` and `smoke-test` successfully.
+
+## Conclusion
+
+The embedded Surfari PDF selection/copy gap is not fixed by routing the
+synthesized mouse stream through `NSWindow sendEvent:`, directly to the
+`WKWebView`, directly to `WKFlippedView`, or directly to `WKPDFHUDView`.
+`window-send-event` can change the copied selection in at least one cell, but in
+this run it made the selection smaller rather than recovering the missing
+tokens. Those dispatch paths are therefore ruled out as simple fix candidates
+for the separated-token PDF selection failure.
+
+The next experiment should move below generic AppKit dispatch and inspect the
+WebKit/PDFKit PDF view internals or selection state more directly. The current
+evidence points toward PDF plugin/PDFKit coordinate interpretation, page/text
+layout mapping, or selection-state extraction inside WebKit's PDF path rather
+than top-level responder activation or mouse target selection.
+
+## Completion Review
+
+Codex reviewed the Experiment 57 implementation and result before the result
+commit. The first completion review found a real control issue: flagged-current
+preserved copied-token output but routed non-drag mouse-move through a different
+path than no-flag current dispatch. The implementation was fixed so non-drag
+mouse-move remains on the original `_simulateMouseMove:` path, and the result
+language was tightened to describe the classification as covering the
+selection-relevant down/drag/up stream.
+
+Codex then re-reviewed the corrected diff, final summary, and result text. The
+re-review found no remaining must-fix implementation or result-language issues
+and approved the result commit after this completion-review section was
+recorded.
