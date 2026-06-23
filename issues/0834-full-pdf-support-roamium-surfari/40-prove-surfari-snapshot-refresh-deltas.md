@@ -169,3 +169,104 @@ Follow-up verdict: **Approved**.
 
 The reviewer found no remaining required design changes before the plan commit
 and implementation.
+
+## Result
+
+**Result:** Pass
+
+The new `scripts/test-issue-834-surfari-snapshot-refresh-deltas.sh` harness
+proves the missing default Surfari snapshot refresh behavior for PDF overlays:
+
+- `TERMSURF_SURFARI_CACONTEXT_LAYER` is unset;
+- Ghostboard, WebTUI, Surfari, and WebKit paths are repo-built artifacts;
+- the harness serves deterministic HTML and PDF fixtures;
+- Ghostboard enters Browse mode with the existing CGEvent injector;
+- Surfari internal render proof passes before interaction;
+- real CGEvent scroll input reaches Surfari through the TermSurf path;
+- Surfari logs a snapshot refresh after scroll;
+- pre/post Ghostboard-window overlay-crop pixels change in the expected
+  direction;
+- split-resize input through Ghostboard's `ctrl+d=new_split:right` keybind
+  produces correlated AppKit `presented_pixels`, Zig `appkit_presented_pixels`,
+  Surfari `resize`, and post-resize visible PDF proof;
+- cleanup terminates Ghostboard, Surfari, WebTUI, and the fixture server.
+
+The final harness run was
+`logs/issue-834-exp40-surfari-snapshot-refresh-deltas/surfari-snapshot-refresh-deltas-summary.json`
+with run id `20260622-202924`.
+
+Key summary values:
+
+- classification: `pdf-refresh-deltas-proven-html-resize-control-missing`;
+- overall result: `pass`;
+- PDF interaction delta: pass;
+- PDF resize visible proof: pass;
+- HTML interaction delta control: pass;
+- HTML resize color-count control: fail;
+- cleanup: pass;
+- default export method: `snapshot-backed`.
+
+The HTML resize color-count control failed because split-pane visual treatment
+changes the captured HTML colors enough that the fixture-specific color proof no
+longer passes. This does not block the experiment because the full Pass
+requirement was tightened to require PDF refresh deltas; HTML is a control. The
+PDF post-resize visible proof passed under the same split-resize path.
+
+Verification:
+
+```bash
+./surfari/libtermsurf_webkit/build.sh
+cargo fmt -p surfari
+cargo build -p surfari
+cargo build -p webtui
+(cd ghostboard && macos/build.nu --configuration Debug --action build)
+bash -n scripts/test-issue-834-surfari-snapshot-refresh-deltas.sh
+git diff --check
+git -C webkit/src status --short
+rm -rf logs/issue-834-exp40-surfari-snapshot-refresh-deltas
+env -u TERMSURF_SURFARI_CACONTEXT_LAYER \
+  scripts/test-issue-834-surfari-snapshot-refresh-deltas.sh
+```
+
+The native WebKit build passed with the existing SDK warning about building for
+macOS 26.0 while linking a WebKit framework built for 26.5. The Ghostboard debug
+build passed with the existing SwiftLint warning in `SurfaceView_AppKit.swift`.
+
+## Conclusion
+
+Experiment 40 closes the evidence gap left by Experiment 39: Surfari's default
+snapshot-backed presentation does not merely show an initial PDF image; it
+visibly refreshes after real TermSurf-routed scroll input and remains visibly
+present after Ghostboard resizes the pane. The next Surfari PDF experiment can
+resume the PDF feature matrix from this working presentation baseline.
+
+## Completion Review
+
+An external Codex review checked the staged result.
+
+Initial verdict: **Changes required**.
+
+Findings:
+
+- the harness did not record Surfari internal render proof, even though the
+  approved design required it before interaction;
+- resize pass could be overclaimed because the harness checked post-resize
+  visible colors but did not require pre/post dimensions to differ;
+- fixture server cleanup was hardcoded as terminated before the server was
+  actually stopped and checked;
+- the completion review needed to be recorded before the result commit.
+
+Resolution:
+
+- each scenario now sets `TERMSURF_SURFARI_RENDER_PROOF_TRACE_FILE` and waits
+  for a passing render-proof line before interaction;
+- resize pass now requires the post-resize AppKit pixel dimensions to differ
+  from the pre-resize dimensions, in addition to the post-resize visible proof;
+- the harness now terminates and checks the fixture server before writing the
+  summary cleanup status;
+- this completion review section records the review result.
+
+Follow-up verdict: **Approved**.
+
+The reviewer found no remaining required fixes before committing Experiment 40
+as a Pass result.

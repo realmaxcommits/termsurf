@@ -199,7 +199,7 @@ Each feature row should ultimately record:
 - [Experiment 39: Make Surfari snapshot presentation normal](39-make-surfari-snapshot-presentation-normal.md)
   — **Partial**
 - [Experiment 40: Prove Surfari snapshot refresh deltas](40-prove-surfari-snapshot-refresh-deltas.md)
-  — **Designed**
+  — **Pass**
 
 ## Roamium Phase
 
