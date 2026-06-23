@@ -162,3 +162,127 @@ Resolution:
 Follow-up verdict after fixes: **Approved**.
 
 The reviewer found no remaining required design changes before the plan commit.
+
+## Result
+
+**Result:** Pass
+
+Experiment 37 added an env-gated Surfari render-proof diagnostic:
+
+- `surfari/libtermsurf_webkit` now exposes a diagnostic render-probe callback;
+- when `TERMSURF_SURFARI_RENDER_PROOF_TRACE_FILE` is set, Surfari registers that
+  callback;
+- after `WKWebView` load completion, the WebKit wrapper calls
+  `WKWebView.takeSnapshot`, counts deterministic colors, and reports the counts
+  back to Rust;
+- Rust logs the render proof with tab id, pane id, URL, method, status, image
+  size, color counts, and error text.
+
+The hook is not part of the TermSurf protobuf protocol and is inactive unless
+the diagnostic environment variable is set.
+
+The focused harness was added as
+`scripts/test-issue-834-surfari-side-render-pixels.sh`. It reuses the Experiment
+36 HTML/PDF real-app scenarios, exports
+`TERMSURF_SURFARI_RENDER_PROOF_TRACE_FILE`, parses the Surfari-side render
+proof, and compares it against Ghostboard-visible screenshot pixel proof.
+
+Run:
+
+```bash
+rm -rf logs/issue-834-exp37-surfari-side-render-pixels \
+  logs/issue-834-exp36-surfari-visual-compositing
+scripts/test-issue-834-surfari-side-render-pixels.sh
+```
+
+Result summary:
+
+- run id: `20260622-192036`;
+- summary:
+  `logs/issue-834-exp37-surfari-side-render-pixels/surfari-side-render-pixels-summary.json`;
+- render proof trace:
+  `logs/issue-834-exp37-surfari-side-render-pixels/surfari-render-proof-20260622-192036.log`;
+- harness log:
+  `logs/issue-834-exp37-surfari-side-render-pixels/harness-20260622-192036.log`;
+- Experiment 36 summary:
+  `logs/issue-834-exp36-surfari-visual-compositing/surfari-visual-compositing-summary.json`.
+
+Surfari-side internal render proof passed:
+
+- HTML control:
+  - method: `WKWebView.takeSnapshot`;
+  - status: `pass`;
+  - size: `3712x2176`;
+  - `cyan = 270400`;
+  - `yellow = 270400`.
+- PDF control:
+  - method: `WKWebView.takeSnapshot`;
+  - status: `pass`;
+  - size: `3712x2176`;
+  - `webkit_green = 1693120`.
+
+Ghostboard-visible pixel proof still failed:
+
+- HTML screenshot pixel status: `fail`;
+- PDF screenshot pixel status: `fail`;
+- no visible deterministic HTML or PDF color target reached the required
+  threshold in window or full-screen screenshots.
+
+The summary classified the result as `ghostboard-compositing-gap` with
+`overall_result = "pass"`.
+
+Verification:
+
+```bash
+./surfari/libtermsurf_webkit/build.sh
+cargo fmt -p surfari
+cargo build -p surfari
+bash -n scripts/test-issue-834-surfari-side-render-pixels.sh
+git diff --check
+git -C webkit/src status --short
+ps -ax -o pid=,comm= | rg 'TermSurf|surfari|server.py|termsurf-issue834-exp3[67]' || true
+```
+
+The wrapper and Surfari binary built successfully. Formatting, shell syntax, and
+diff checks passed. `webkit/src` stayed clean. The process check produced no
+matching rows. The summary records both scenario processes and the server as
+`terminated`.
+
+## Conclusion
+
+The Surfari PDF blankness is not a WebKit/PDF rendering failure. Surfari's own
+`WKWebView` renders both the HTML control and the PDF fixture with the expected
+pixels. The failure is between Surfari's rendered `WKWebView` layer and
+Ghostboard-visible composition.
+
+The next experiment should diagnose the Ghostboard/CAContext hosting path:
+whether `CAContext.remoteContext.layer = web_view.layer` is sufficient for a
+hidden/transparent source window, whether the exported layer needs a wrapper
+layer, whether Ghostboard's `CALayerHost` is attached or ordered incorrectly, or
+whether the source window/layer visibility/lifetime is invalid for cross-process
+display.
+
+## Completion Review
+
+An external Codex review checked the completed experiment result and harness.
+
+Initial verdict: **Changes required**.
+
+Finding:
+
+- the completion review had not yet been recorded in this file.
+
+Resolution:
+
+- this completion-review section records the review.
+
+The reviewer found no other required issues. It confirmed that the env-gated
+runtime behavior is scoped correctly, Surfari only registers
+`ts_set_on_render_probe` when `TERMSURF_SURFARI_RENDER_PROOF_TRACE_FILE` is set,
+the Objective-C++ snapshot path produced real internal pixels for both controls,
+Rust traces match the expected tab/pane/URL evidence, Ghostboard-visible pixels
+still fail, and the `ghostboard-compositing-gap` classification is supported.
+
+Follow-up verdict after fixes: **Approved**.
+
+The reviewer found no remaining required changes before the result commit.

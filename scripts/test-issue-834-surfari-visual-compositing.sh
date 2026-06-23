@@ -404,6 +404,13 @@ EOF
 
   cleanup_current_process || true
   cleanup_status="terminated"
+  for _ in $(seq 1 20); do
+    if [ -z "$CURRENT_PID" ] || ! kill -0 "$CURRENT_PID" >/dev/null 2>&1; then
+      cleanup_status="terminated"
+      break
+    fi
+    delay 0.1
+  done
   if [ -n "$CURRENT_PID" ] && kill -0 "$CURRENT_PID" >/dev/null 2>&1; then
     cleanup_status="still-running"
   fi

@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cmath>
+#include <cstdlib>
 #include <vector>
 #include <objc/runtime.h>
 
@@ -75,6 +77,8 @@ struct CallbackState {
     void *on_http_auth_request_data = nullptr;
     ts_renderer_crashed_cb on_renderer_crashed = nullptr;
     void *on_renderer_crashed_data = nullptr;
+    ts_render_probe_cb on_render_probe = nullptr;
+    void *on_render_probe_data = nullptr;
 };
 
 static CallbackState g_callbacks;
@@ -450,6 +454,108 @@ static void fireTitle(WebContents *contents, NSString *title)
     });
 }
 
+static bool closeToColor(NSUInteger red, NSUInteger green, NSUInteger blue, NSUInteger target_red, NSUInteger target_green, NSUInteger target_blue)
+{
+    const NSInteger threshold = 40;
+    NSInteger dr = labs((NSInteger)red - (NSInteger)target_red);
+    NSInteger dg = labs((NSInteger)green - (NSInteger)target_green);
+    NSInteger db = labs((NSInteger)blue - (NSInteger)target_blue);
+    return dr + dg + db <= threshold;
+}
+
+static void fireRenderProbe(
+    WebContents *contents,
+    NSString *method,
+    NSString *status,
+    int width,
+    int height,
+    int magenta,
+    int cyan,
+    int yellow,
+    int webkit_green,
+    NSString *error)
+{
+    if (!g_callbacks.on_render_probe)
+        return;
+
+    withCString(method ?: @"unknown", ^(const char *c_method) {
+        withCString(status ?: @"unknown", ^(const char *c_status) {
+            withCString(error ?: @"", ^(const char *c_error) {
+                g_callbacks.on_render_probe(
+                    contents,
+                    c_method,
+                    c_status,
+                    width,
+                    height,
+                    magenta,
+                    cyan,
+                    yellow,
+                    webkit_green,
+                    c_error,
+                    g_callbacks.on_render_probe_data);
+            });
+        });
+    });
+}
+
+static void classifySnapshotImage(WebContents *contents, NSString *method, NSImage *image, NSError *error)
+{
+    if (error || !image) {
+        fireRenderProbe(contents, method, @"capture-failed", 0, 0, 0, 0, 0, 0, error.localizedDescription ?: @"missing-image");
+        return;
+    }
+
+    CGImageRef cg_image = [image CGImageForProposedRect:nil context:nil hints:nil];
+    if (!cg_image) {
+        fireRenderProbe(contents, method, @"capture-failed", 0, 0, 0, 0, 0, 0, @"missing-cgimage");
+        return;
+    }
+
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cg_image];
+    NSInteger width = bitmap.pixelsWide;
+    NSInteger height = bitmap.pixelsHigh;
+    int magenta = 0;
+    int cyan = 0;
+    int yellow = 0;
+    int webkit_green = 0;
+
+    for (NSInteger y = 0; y < height; y++) {
+        for (NSInteger x = 0; x < width; x++) {
+            NSColor *color = [[bitmap colorAtX:x y:y] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+            if (!color)
+                continue;
+            NSUInteger red = (NSUInteger)lrint(color.redComponent * 255.0);
+            NSUInteger green = (NSUInteger)lrint(color.greenComponent * 255.0);
+            NSUInteger blue = (NSUInteger)lrint(color.blueComponent * 255.0);
+            if (closeToColor(red, green, blue, 255, 0, 255))
+                magenta++;
+            if (closeToColor(red, green, blue, 0, 255, 255))
+                cyan++;
+            if (closeToColor(red, green, blue, 255, 255, 0))
+                yellow++;
+            if (closeToColor(red, green, blue, 0, 128, 0))
+                webkit_green++;
+        }
+    }
+
+    NSString *status = (magenta >= 5000 || cyan >= 5000 || yellow >= 5000 || webkit_green >= 5000) ? @"pass" : @"blank";
+    fireRenderProbe(contents, method, status, (int)width, (int)height, magenta, cyan, yellow, webkit_green, @"");
+}
+
+static void captureRenderProbe(WebContents *contents)
+{
+    if (!contents || !contents->web_view)
+        return;
+    if (!g_callbacks.on_render_probe)
+        return;
+
+    WKSnapshotConfiguration *configuration = [[WKSnapshotConfiguration alloc] init];
+    configuration.rect = contents->web_view.bounds;
+    [contents->web_view takeSnapshotWithConfiguration:configuration completionHandler:^(NSImage *snapshotImage, NSError *error) {
+        classifySnapshotImage(contents, @"WKWebView.takeSnapshot", snapshotImage, error);
+    }];
+}
+
 static void fireTargetUrl(WebContents *contents, NSString *url)
 {
     if (!contents || !g_callbacks.on_target_url_changed)
@@ -787,6 +893,7 @@ static void exportContext(WebContents *contents)
         fireTitle(self.owner, title);
         fireLoading(self.owner, webView.URL.absoluteString, 0);
         exportContext(self.owner);
+        captureRenderProbe(self.owner);
     }];
 }
 
@@ -1446,6 +1553,17 @@ void ts_set_on_renderer_crashed(ts_renderer_crashed_cb cb, void *user_data)
 {
     g_callbacks.on_renderer_crashed = cb;
     g_callbacks.on_renderer_crashed_data = user_data;
+}
+
+void ts_set_on_render_probe(ts_render_probe_cb cb, void *user_data)
+{
+    g_callbacks.on_render_probe = cb;
+    g_callbacks.on_render_probe_data = user_data;
+}
+
+void ts_webkit_test_capture_render_probe(ts_web_contents_t wc)
+{
+    captureRenderProbe(static_cast<WebContents *>(wc));
 }
 
 extern "C" void ts_webkit_test_evaluate_javascript(
