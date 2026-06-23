@@ -237,6 +237,24 @@ static bool pdfCopyDirectEnabled()
     return NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_COPY_DIRECT"].length > 0;
 }
 
+static NSString *pdfSelectionEdgeProbeMode()
+{
+    NSString *mode = NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_SELECTION_EDGE_MODE"];
+    if (mode.length == 0)
+        return nil;
+    if (NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_SELECTION_EDGE_PROBE"].length == 0)
+        return nil;
+    return mode;
+}
+
+static CGFloat pdfSelectionEdgeDeltaX()
+{
+    NSString *value = NSProcessInfo.processInfo.environment[@"TERMSURF_SURFARI_PDF_SELECTION_EDGE_DELTA_X"];
+    if (value.length == 0)
+        return 0;
+    return value.doubleValue;
+}
+
 static NSString *describeObject(id object)
 {
     if (!object)
@@ -465,6 +483,17 @@ static CGPoint eventLocationInGlobalScreen(WebContents *contents, int x, int y)
     NSPoint screenPoint = [contents->window convertPointToScreen:windowPoint];
     CGFloat screenHeight = NSScreen.screens.firstObject.frame.size.height;
     return CGPointMake(screenPoint.x, screenHeight - screenPoint.y);
+}
+
+static NSPoint adjustedPdfSelectionLocation(WebContents *contents, int x, int y, bool dragging)
+{
+    NSPoint location = eventLocationInWindow(contents, x, y);
+    NSString *mode = pdfSelectionEdgeProbeMode();
+    if (!dragging || ![mode isEqualToString:@"delta"])
+        return location;
+
+    location.x += pdfSelectionEdgeDeltaX();
+    return location;
 }
 
 static NSEventType mouseEventType(int type, int button)
@@ -1566,8 +1595,10 @@ void ts_forward_mouse_event(ts_web_contents_t wc, int type, int button, int x, i
     if (!contents)
         return;
 
-    NSPoint location = eventLocationInWindow(contents, x, y);
     bool is_up = type == 1;
+    bool was_dragging = (contents->mouse_buttons_down & mouseButtonMask(button)) != 0;
+    NSPoint original_location = eventLocationInWindow(contents, x, y);
+    NSPoint location = adjustedPdfSelectionLocation(contents, x, y, is_up && was_dragging);
     if (!is_up) {
         updateClickCount(contents, button, location);
         contents->mouse_buttons_down |= mouseButtonMask(button);
@@ -1586,7 +1617,26 @@ void ts_forward_mouse_event(ts_web_contents_t wc, int type, int button, int x, i
         clickCount:MAX(click_count, (int)contents->mouse_click_count)
         pressure:type == 0 ? 1.0 : 0.0];
     if (pdfCopyTraceEnabled()) {
-        appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-mouse tab=%d type=%d button=%d x=%d y=%d click_count=%d modifiers=%d location=%@", contents->tab_id, type, button, x, y, click_count, modifiers, NSStringFromPoint(location)]);
+        appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-mouse tab=%d type=%d button=%d x=%d y=%d click_count=%d modifiers=%d location=%@ original_location=%@ edge_mode=%@ edge_delta=%.2f", contents->tab_id, type, button, x, y, click_count, modifiers, NSStringFromPoint(location), NSStringFromPoint(original_location), pdfSelectionEdgeProbeMode() ?: @"none", pdfSelectionEdgeDeltaX()]);
+    }
+    if (is_up && was_dragging && [pdfSelectionEdgeProbeMode() isEqualToString:@"extra-drag"]) {
+        NSPoint extra_location = original_location;
+        extra_location.x += pdfSelectionEdgeDeltaX();
+        NSEvent *extra_event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+            location:extra_location
+            modifierFlags:cocoaModifiers(modifiers)
+            timestamp:[[NSDate date] timeIntervalSince1970]
+            windowNumber:contents->window.windowNumber
+            context:[NSGraphicsContext currentContext]
+            eventNumber:++contents->mouse_event_number
+            clickCount:contents->mouse_click_count
+            pressure:0.0];
+        [NSApp _setCurrentEvent:extra_event];
+        [contents->web_view mouseDragged:extra_event];
+        [NSApp _setCurrentEvent:nil];
+        if (pdfCopyTraceEnabled()) {
+            appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-selection-edge tab=%d mode=extra-drag x=%d y=%d original_location=%@ adjusted_location=%@ delta=%.2f", contents->tab_id, x, y, NSStringFromPoint(original_location), NSStringFromPoint(extra_location), pdfSelectionEdgeDeltaX()]);
+        }
     }
     deliverMouseEvent(contents, event);
     if (type == 1)
@@ -1601,8 +1651,10 @@ void ts_forward_mouse_move(ts_web_contents_t wc, int x, int y, int modifiers)
         return;
 
     bool is_drag = contents->mouse_buttons_down & mouseButtonMask(0);
+    NSPoint original_location = eventLocationInWindow(contents, x, y);
+    NSPoint location = adjustedPdfSelectionLocation(contents, x, y, is_drag);
     NSEvent *event = [NSEvent mouseEventWithType:is_drag ? NSEventTypeLeftMouseDragged : NSEventTypeMouseMoved
-        location:eventLocationInWindow(contents, x, y)
+        location:location
         modifierFlags:cocoaModifiers(modifiers)
         timestamp:[[NSDate date] timeIntervalSince1970]
         windowNumber:contents->window.windowNumber
@@ -1612,14 +1664,19 @@ void ts_forward_mouse_move(ts_web_contents_t wc, int x, int y, int modifiers)
         pressure:0.0];
     [NSApp _setCurrentEvent:event];
     contents->suppress_cursor_notifications = true;
-    if (is_drag)
-        [contents->web_view mouseDragged:event];
-    else
+    if (is_drag) {
+        if ([pdfSelectionEdgeProbeMode() isEqualToString:@"target"]) {
+            NSView *target = [contents->web_view hitTest:event.locationInWindow] ?: contents->web_view;
+            [target mouseDragged:event];
+        } else {
+            [contents->web_view mouseDragged:event];
+        }
+    } else
         [contents->web_view _simulateMouseMove:event];
     contents->suppress_cursor_notifications = false;
     [NSApp _setCurrentEvent:nil];
     if (is_drag && pdfCopyTraceEnabled()) {
-        appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-drag tab=%d x=%d y=%d modifiers=%d location=%@", contents->tab_id, x, y, modifiers, NSStringFromPoint(event.locationInWindow)]);
+        appendPdfCopyTrace([NSString stringWithFormat:@"surfari-pdf-copy-drag tab=%d x=%d y=%d modifiers=%d location=%@ original_location=%@ edge_mode=%@ edge_delta=%.2f", contents->tab_id, x, y, modifiers, NSStringFromPoint(event.locationInWindow), NSStringFromPoint(original_location), pdfSelectionEdgeProbeMode() ?: @"none", pdfSelectionEdgeDeltaX()]);
     }
     if (is_drag)
         scheduleSnapshotLayerRefresh(contents, @"mouse-drag");

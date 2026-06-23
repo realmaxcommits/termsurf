@@ -158,3 +158,111 @@ Follow-up verdict: **Approved**.
 
 The reviewer found no remaining must-fix design issues and approved the
 Experiment 52 plan commit.
+
+## Result
+
+**Result:** Pass
+
+Added env-gated Surfari right-edge selection probes in
+`surfari/libtermsurf_webkit/src/libtermsurf_webkit.mm` and a focused harness,
+`scripts/test-issue-834-surfari-pdf-right-edge-correction.sh`.
+
+The product behavior remains unchanged unless
+`TERMSURF_SURFARI_PDF_SELECTION_EDGE_PROBE=1` is set. The probe supports:
+
+- `TERMSURF_SURFARI_PDF_SELECTION_EDGE_MODE=delta`;
+- `TERMSURF_SURFARI_PDF_SELECTION_EDGE_MODE=extra-drag`;
+- `TERMSURF_SURFARI_PDF_SELECTION_EDGE_MODE=target`;
+- `TERMSURF_SURFARI_PDF_SELECTION_EDGE_DELTA_X={points}`.
+
+Verification:
+
+```bash
+bash -n scripts/test-issue-834-surfari-pdf-right-edge-correction.sh
+cargo fmt -p surfari -- --check
+surfari/libtermsurf_webkit/build.sh
+cargo build -p surfari
+git diff --check
+git -C webkit/src status --short
+rm -rf logs/issue-834-exp52-surfari-pdf-right-edge-correction
+scripts/test-issue-834-surfari-pdf-right-edge-correction.sh
+```
+
+The successful diagnostic run was `20260623-005711`. Its summary is:
+
+```text
+logs/issue-834-exp52-surfari-pdf-right-edge-correction/surfari-pdf-right-edge-correction-summary.json
+```
+
+The run classified the result as:
+
+```json
+{
+  "baseline_reproduced": true,
+  "classification": "right-edge-persists",
+  "fallback_only_count": 0,
+  "fixture_identity_match": true,
+  "overall_result": "pass",
+  "primary_winner_count": 0
+}
+```
+
+Key evidence:
+
+- The no-correction baseline reproduced the embedded right-edge failure: primary
+  copy returned `LEFT834 MID834`, not `RIGHT834`.
+- The Experiment 50 oracle gate was open and the embedded fixture identity
+  matched the oracle fixture identity.
+- Positive x deltas of `8`, `16`, `32`, and `64` points still copied only
+  `LEFT834 MID834` in the primary post-selection/direct-copy sample.
+- The `extra-drag` candidate with a 32 point delta still copied only
+  `LEFT834 MID834`.
+- The `target` candidate still copied only `LEFT834 MID834`.
+- No candidate copied all three tokens in the primary sample.
+- No candidate copied all three tokens through fallback/select-all evidence
+  either.
+- Correction traces were present for all candidate cells.
+- Clipboard restoration succeeded.
+
+## Conclusion
+
+The simple mouse-forwarding correction candidates did not fix the embedded
+right-edge selection gap. Adding x delta to drag/mouse-up, injecting an extra
+rightward drag, and switching drag delivery to the hit-tested target all left
+the copied text at `LEFT834 MID834`.
+
+The next experiment should look deeper than final event coordinates. Likely next
+directions are PDF plugin/view coordinate conversion, page-scale or PDF-page
+selection bounds, or a more direct WebKit/PDFKit selection bridge. The current
+result rules out the simplest synthetic mouse endpoint fixes.
+
+## Completion Review
+
+An external Codex completion review checked the Surfari probe code, correction
+harness, result language, and final summary.
+
+Initial verdict: **Changes required**.
+
+Findings:
+
+- the first correction harness checked the Experiment 50 oracle gate but did not
+  enforce fixture identity before interpreting correction candidates;
+- the experiment file needed to record completion review before the result
+  commit.
+
+Resolution:
+
+- updated `scripts/test-issue-834-surfari-pdf-right-edge-correction.sh` to
+  compare each embedded fixture's page geometry, font, text operator, token
+  boxes, and extracted text against the Experiment 50 oracle fixture identity;
+- reran the probe as `20260623-005711`;
+- updated the result text to include `fixture_identity_match: true`.
+
+Follow-up verdict: **Approved**.
+
+The reviewer found no remaining technical must-fix issues. It agreed that the
+fixture identity gate is now enforced and recorded strongly enough, and that the
+rerun supports `Pass` / `right-edge-persists`: oracle open, fixture identity
+match, baseline reproduced, correction traces present, clipboard restored, no
+primary winners, no fallback-only winners, and all correction cells still miss
+`RIGHT834`.
